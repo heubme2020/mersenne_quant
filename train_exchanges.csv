@@ -1,0 +1,32 @@
+exchange,name,countryName,countryCode,symbolSuffix,delay,num_symbols
+NASDAQ,NASDAQ,United States of America,US,N/A,Real-time,5473
+JPX,Tokyo Stock Exchange,Japan,JP,.T,20 min,4010
+BSE,Bombay Stock Exchange,India,IN,.BO,15 min,3895
+LSE,London Stock Exchange,United Kingdom,UK,.L,15 min,3380
+NYSE,New York Stock Exchange,United States of America,US,N/A,Real-time,2870
+HKSE,Hong Kong Stock Exchange,Hong Kong,HK,.HK,15 min,2752
+SHZ,Shenzhen Stock Exchange,China,CN,.SZ,15 min,2465
+ASX,Australian Securities Exchange,Australia,AU,.AX,20 min,2300
+NSE,National Stock Exchange of India,India,IN,.NS,15 min,2242
+SHH,Shanghai Stock Exchange,China,CN,.SS,15 min,2028
+TWO,Taipei Exchange,Taiwan,TW,.TWO,20 min,1150
+TAI,Taiwan Stock Exchange,Taiwan,TW,.TW,20 min,1048
+KSC,Korea Exchange,South Korea,KR,.KS,20 min,1017
+XETRA,Deutsche Börse,Germany,DE,.DE,15 min,1000
+TSXV,Toronto Stock Exchange Ventures,Canada,CA,.V,Real-time,989
+SET,Stock Exchange of Thailand,Thailand,TH,.BK,15 min,985
+TSX,Toronto Stock Exchange,Canada,CA,.TO,15 min,983
+STO,Stockholm Stock Exchange,Sweden,SE,.ST,Real-time,918
+PAR,Euronext Paris,France,FR,.PA,15 min,887
+JKT,Indonesia Stock Exchange,Indonesia,ID,.JK,10 min,886
+CNQ,Canadian Securities Exchange,Canada,CA,.CN,Real-time,753
+TLV,Tel Aviv Stock Exchange,Israel,IL,.TA,15 min,539
+SAO,B3 S.A.,Brazil,BR,.SA,15 min,466
+WSE,Warsaw Stock Exchange,Poland,PL,.WA,Real-time,445
+SIX,Swiss Exchange,Switzerland,CH,.SW,15 min,408
+KOE,KOSDAQ,South Korea,KR,.KQ,20 min,370
+SAU,Saudi Exchange,Saudi Arabia,SA,.SR,15 min,369
+KLS,Malaysian Stock Exchange,Malaysia,MY,.KL,15 min,313
+OSL,Oslo Stock Exchange,Norway,NO,.OL,15 min,312
+AMEX,New York Stock Exchange Arca,United States of America,US,N/A,Real-time,307
+MIL,Italian Stock Exchange,Italy,IT,.MI,15 min,279
