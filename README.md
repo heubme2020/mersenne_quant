@@ -4,4 +4,6 @@ model, data and else can be found at  通过网盘分享的文件：mersenne_qua
 
 enjoy it
 
-![Live Trading Results](393457591.jpg; 1243766512.jpg; 1607590166.jpg)
+![Live Trading Results](393457591.jpg)
+![Live Trading Results](1243766512.jpg)
+![Live Trading Results](1243766512.jpg)
