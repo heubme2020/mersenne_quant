@@ -6,4 +6,4 @@ enjoy it
 
 ![Live Trading Results](393457591.jpg)
 ![Live Trading Results](1243766512.jpg)
-![Live Trading Results](1243766512.jpg)
+![Live Trading Results](1607590166.jpg)
