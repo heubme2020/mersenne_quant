@@ -62,6 +62,17 @@
 
 ## 未发布
 
+### 移除
+
+* **计划/待改进类文档 3 份**（内容要么已实现、要么已被后续实验取代）：
+  `one/loss优化实验规划.md`、`zero/zero待改进.md`、`two/nowcast/rd_plan_daily2fin.md`。
+* **论文与摘录 6 份**（PDF 3.3 MB + 4 份读论文的摘录笔记）：
+  两篇 LFM/基本面预测论文、`_paper_improving.txt`、`paper_lfm_1711.04837.md`、
+  `euclidean_technologies.md`、`shiller.md`。
+* **两处目录说明**（`one/factor_screen/README.md`、`two/nowcast/README.md`）与
+  `one/实验结果_5win.md` 顶部的迁移说明块。
+* 以上都移入 `_trash_20260928/docs/`（不是从历史里删除）；实验记录类文档全部保留。
+
 ### 变更
 
 * **三个重训脚本合并成一个入口 `refresh_model.py`**（2026-09-28）：
@@ -81,5 +92,5 @@
   正在跑，它的阶段 3 会以子进程调用这个文件名。**等那次跑完即可删除**，
   等价入口是 `refresh_model.py --stage train`。
 * `full_retrain.py` 已移入 `_trash_20260928/`（正在跑的进程已把它读进内存，不受影响）。
-* 文档里的脚本名引用同步更新：`README.md`、`two/nowcast/README.md`、`two/train.py`、
-  `two/get_two_predict.py`、`two/nowcast/variants.py`。
+* 文档里的脚本名引用同步更新：`README.md`、`two/train.py`、`two/get_two_predict.py`、
+  `two/nowcast/variants.py`。

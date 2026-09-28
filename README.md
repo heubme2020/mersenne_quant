@@ -135,7 +135,7 @@ python refresh_model.py              # 正式跑
 **4. "可预测"与"能赚钱"是两件事** —— 这是这个仓库最大的教训：
 财务量本身可以有很高的 IC（见第 1 条），但那不构成可交易的优势；
 反过来，收益端的失败也不代表预测财务量没意义（两者要分开评估）。
-仓库里的 `*/loss优化实验规划.md`、`three损失函数优化实验.md`、`indicator特征删减*.md`
+仓库里的 `three损失函数优化实验.md`、`indicator特征删减*.md` 等
 记录了对应模块的完整实验（含被否决的方案与原因）。
 
 ## 七、五个模型共用的约定
@@ -176,7 +176,7 @@ data/  */train/  *.pt   数据与权重（*.pt 只入库 5 个生产模型 + leg
 | `格雷厄姆投资思想与系统优化.md` | 投资框架与系统设计的来龙去脉 |
 | `one/实验结果_5win.md` | 现役因子集 `new24` 的筛选过程 |
 | `three损失函数优化实验.md`、`indicator特征删减*.md` | 各模块的实验记录 |
-| `zero/zero标签与特征改造论证.md`、`zero/zero待改进.md` | 避雷模型的标签/特征论证 |
+| `zero/zero标签与特征改造论证.md` | 避雷模型的标签/特征论证 |
 | `two/nowcast/*.md` | nowcast 实验线：`phase1_label_v2.md`（标签定案）、`phase0_label_anchor_experiment.md`、`two_2x2_experiment.md`、估值分析等 |
 | `M06-06-gtja191-formula-reference.md` | 用到的 GTJA191 因子公式参考 |
 
