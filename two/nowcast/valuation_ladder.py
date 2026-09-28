@@ -27,6 +27,15 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, 'schloss'))
 from get_schloss import ncav_per_share                      # noqa: E402
 
+# Windows 控制台默认 GBK，而本文件会打印 `−`（U+2212）等非 GBK 字符 —— 从 GBK 控制台直接跑
+# 会 UnicodeEncodeError。与其它脚本同一套修法（2026-09-28 扫描后补齐）。
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
+
 DAYS_PER_Q = 63
 HORIZONS = [1, 3, 7]
 GP = 'grossProfit'

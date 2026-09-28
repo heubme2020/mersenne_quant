@@ -29,9 +29,19 @@
 * 只做配对比较，**不改任何生产文件、不写任何模型文件**。
 """
 import os
+import sys
 
 import numpy as np
 import pandas as pd
+
+# Windows 控制台默认 GBK，而本文件会打印 `−`（U+2212）等非 GBK 字符 —— 从 GBK 控制台直接跑
+# 会 UnicodeEncodeError。与其它脚本同一套修法（2026-09-28 扫描后补齐）。
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
 
 # 明细路径相对【本脚本所在目录】解析 —— eval_v2 的 --out 也是相对它自己（two/nowcast/）解析的，
 # 用相对 cwd 的写法会从 quant/ 根目录下找不到文件。

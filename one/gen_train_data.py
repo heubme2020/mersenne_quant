@@ -1,5 +1,6 @@
 
 import os
+import sys
 import pandas as pd
 from tqdm import tqdm
 import random
@@ -28,6 +29,16 @@ TOMORROW_IDX = DAYS_INPUT       # 889：明天（close 标签基准）
 FACTOR_MODE = os.environ.get('FACTOR_MODE', 'new24')   # 2026-09-14 起默认用新 24 个
 from factor_config import get_technical_factors  # noqa: E402
 from factor_pool import add_pool_factors  # noqa: E402
+
+# Windows 控制台默认 GBK，而本文件会打印 `⚠️` / `🎉` 这类非 GBK 字符 —— 走到那条分支就会
+# UnicodeEncodeError 崩掉，而且**往往是在活儿干完之后**才崩（2026-09-26 zero/gen 就这么"失败"过：
+# 日志里 already 写着总量，然后崩在一句庆祝打印上）。与其它脚本同一套修法。2026-09-28 扫描后补齐。
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
 
 NEW_FACTOR_H5 = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'factor_screen', 'new_factors.h5')
 
@@ -140,6 +151,7 @@ def gen_group_train_data(groups, train_folder, sample_rate):
     train_folder: 训练数据保存路径
     sample_rate: 抽样率
     """
+    files_created = 0
     for i in tqdm(range(len(groups))):
         symbol = groups[i][0]
         daily_group = groups[i][1].copy(deep=True).reset_index(drop=True)
@@ -221,8 +233,9 @@ def gen_group_train_data(groups, train_folder, sample_rate):
                 data[(data < -127.0)] = -127.0
 
                 data.to_hdf(data_name, key='data', mode='w', format='fixed')
+                files_created += 1
 
-    return len(groups)
+    return files_created          # 与另外四个 gen 一致：报"生成的文件数"而不是"股票组数"
 
 
 def gen_exchange_one_train_data(exchange, train_folder, sample_rate):
@@ -233,7 +246,7 @@ def gen_exchange_one_train_data(exchange, train_folder, sample_rate):
     try:
         daily_data = pd.read_csv(daily_path, encoding="utf-8")
     except FileNotFoundError:
-        print(f"Error: Data file not found at {daily_path}")
+        print(f"Error: Data files not found for {exchange}.")
         return
 
     if FACTOR_MODE in ('plan1', 'plan2', 'plan1_ts', 'plan2_ts'):
@@ -243,7 +256,8 @@ def gen_exchange_one_train_data(exchange, train_folder, sample_rate):
             daily_data = daily_data.merge(long, on=['date', 'symbol'], how='left')
         print(f"合并了 {len(new_factors)} 个新因子（{FACTOR_MODE}）。", flush=True)
 
-    print(f"Loaded {upper_exchange} data with {len(daily_data)} rows.")
+    print(f"Loading {upper_exchange} data...", flush=True)
+    print(f"  {len(daily_data):,} rows")
 
     groups = list(daily_data.groupby('symbol'))
     random.shuffle(groups)
@@ -259,12 +273,14 @@ def gen_exchange_one_train_data(exchange, train_folder, sample_rate):
         end = (i + 1) * split_size if i < NUM_PROCESSES - 1 else group_count
         groups_list_for_starmap.append((groups[start:end], train_folder, sample_rate))
 
-    print(f"Starting {NUM_PROCESSES} processes for {upper_exchange}...")
+    print(f"Starting {NUM_PROCESSES} processes for {group_count} groups.")
 
     with Pool(processes=NUM_PROCESSES) as pool:
         results = pool.starmap(gen_group_train_data, groups_list_for_starmap)
 
-    print(f"Finished processing {upper_exchange}. Total groups processed: {sum(results)}")
+    n_created = sum(results)          # 与另外四个 gen 一样：报"生成的文件数"而不是"股票组数"
+    print(f"Finished {upper_exchange}. Total files created: {n_created}", flush=True)
+    return n_created
 
 
 def gen_one_train_data(exchanges, train_folder, sample_rate):
@@ -276,15 +292,22 @@ def gen_one_train_data(exchanges, train_folder, sample_rate):
 
     failed_list = []
 
+    total_files = 0
     for exchange in exchanges:
+        print(f"\n--- Starting processing for {exchange} ---", flush=True)
         try:
-            gen_exchange_one_train_data(exchange, train_folder, sample_rate)
+            total_files += gen_exchange_one_train_data(exchange, train_folder, sample_rate) or 0
         except Exception as e:
             failed_list.append((exchange, str(e)))
-            print(f"Error processing {exchange}: {e}")
-            pass
+            print(f"FATAL error for exchange {exchange}: {e}")
 
-    print(f"Failed to process exchanges: {failed_list}")
+    # 与 three/seven/zero 的 gen 同一套收尾
+    print("\n--- Summary ---")
+    print(f"Total HDF5 files created: {total_files}")
+    if failed_list:
+        print(f"Failed to process exchanges: {failed_list} ⚠️")
+    else:
+        print("All exchanges processed successfully! 🎉")
 
 
 def main():
