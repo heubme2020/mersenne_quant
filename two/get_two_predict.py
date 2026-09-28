@@ -1,5 +1,6 @@
 import torch
 import os
+import time
 import random
 import sys
 import pandas as pd
@@ -41,6 +42,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 # 删掉它之后 two 必须照样能跑。two_features 里的 build_x 是从 gen_data2 **逐字抽取**的，
 # 并由 `two/_verify_vs_nowcast.py` 用真实日线窗口做过**逐位相等**校验（6/6 通过）。
 from two_features import build_x, RAW as NC_RAW, WINDOW as NC_WINDOW, DAYS_INPUT as NC_DAYS_INPUT, available_date  # noqa: E402
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根（本脚本在 <root>/<model>/）
+VERBOSE = '--verbose' in sys.argv    # 默认只打摘要行；加 --verbose 才打整张表（旧行为）
 
 # def add_technical_factor(data):
 #     # 均线
@@ -170,10 +174,12 @@ def get_two_candidates(check_days=0, target_date=None):
     zero_data.drop(columns=['seven'], inplace=True)
     zero_data.drop(columns=['thirty_one'], inplace=True)
     zero_data = zero_data[zero_data['zero'] > zero_data['zero'].median()].reset_index(drop=True)
-    print(zero_data)
+    print(f'[two] 上游 zero_predict.csv：{len(zero_data)} 只入选（zero > 中位数）', flush=True)
+    if VERBOSE: print(zero_data)
     schloss_data = pd.read_csv(data_name + '../schloss/schloss.csv')
     schloss_data.drop(columns=['endDate'], inplace=True)
-    print(schloss_data)
+    print(f'[two] 上游 schloss.csv：{len(schloss_data)} 只', flush=True)
+    if VERBOSE: print(schloss_data)
     buffett_data = pd.merge(schloss_data, zero_data, on=['symbol'], how='inner').dropna().reset_index(drop=True)
     buffett_data['buffett'] = buffett_data['dcf']*buffett_data['netAssetValuePerShare']/buffett_data['close'] + buffett_data['schloss']
     buffett_data = buffett_data.sort_values('buffett', ascending=False)
@@ -181,9 +187,11 @@ def get_two_candidates(check_days=0, target_date=None):
     # buffett_data = buffett_data[buffett_data['buffett'] > buffett_data['buffett'].median()].reset_index(drop=True)
     buffett_list = buffett_data['symbol'].to_list()
     # 第三个估值块的分子要用的财务数据：最新【已披露】季度的 总资产/毛利/股本
-    print('读财务数据（总资产 / 毛利 / 股本）...', flush=True)
+    print('[two] 读财务数据（总资产 / 毛利 / 股本）...', flush=True)
     funda = load_ashare_fundamentals(data_name)
     groups = list(daily_data.groupby('symbol'))
+    t0 = time.time()
+    print(f'[two] 候选预测：日线 {len(groups)} 只 -> buffett 池 {len(buffett_list)} 只', flush=True)
     predict_list = []
     n_skip_funda = 0
     for i in tqdm(range(len(groups))):
@@ -326,8 +334,10 @@ def get_two_candidates(check_days=0, target_date=None):
     predict_data.drop(columns=['gp_yield'], inplace=True)      # 内部列，不落盘（避免级联进 one/buy）
     predict_data = predict_data.sort_values('buffett', ascending=False)
     predict_data = predict_data.reset_index(drop=True)
-    print(predict_data)
     two_predict_name = os.path.join(os.path.dirname(__file__), 'two_predict.csv')
+    print(f'[two] 完成：{len(predict_data)} 行 × {predict_data.shape[1]} 列 -> '
+          f'{os.path.relpath(two_predict_name, ROOT)}（{time.time()-t0:.1f}s）', flush=True)
+    if VERBOSE: print(predict_data)
     predict_data.to_csv(two_predict_name, index=False)
  
 

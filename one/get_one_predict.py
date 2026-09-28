@@ -1,5 +1,7 @@
 import torch
 import os
+import sys
+import time
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
@@ -17,6 +19,9 @@ from factor_pool import add_pool_factors  # noqa: E402
 
 NEW_FACTOR_H5 = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'factor_screen', 'new_factors.h5')
 
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根（本脚本在 <root>/<model>/）
+VERBOSE = '--verbose' in sys.argv    # 默认只打摘要行；加 --verbose 才打整张表（旧行为）
 
 def load_new_factors():
     store = pd.HDFStore(NEW_FACTOR_H5, mode='r')
@@ -245,6 +250,8 @@ def get_one_candidates(check_days=0, target_date=None):
     buffett_list = two_data['symbol'].to_list()
 
     groups = list(daily_data.groupby('symbol'))
+    t0 = time.time()
+    print(f'[one] 候选预测：日线 {len(groups)} 只 -> two 池筛后 {len(buffett_list)} 只', flush=True)
     predict_list = []
     for i in tqdm(range(len(groups))):
         symbol = groups[i][0]
@@ -268,8 +275,9 @@ def get_one_candidates(check_days=0, target_date=None):
     raise_on_empty_merge(predict_data, predict_dates, two_data['date'].tolist(), 'two/two_predict.csv')
     predict_data['up_down'] = compute_aligned_updown(predict_data)
     predict_data = predict_data.sort_values('buffett', ascending=False).reset_index(drop=True)
-    print(predict_data)
-    one_predict_name = os.path.join(os.path.dirname(__file__), 'one_predict.csv')
+    print(f'[one] 完成：{len(predict_data)} 行 × {predict_data.shape[1]} 列 -> '
+          f'{os.path.relpath(one_predict_name, ROOT)}（{time.time()-t0:.1f}s）', flush=True)
+    if VERBOSE: print(predict_data)
     predict_data.to_csv(one_predict_name, index=False)
 
 
@@ -285,6 +293,8 @@ def get_one_all(check_days=0):
         daily_data = merge_new_factors(daily_data)
 
     groups = list(daily_data.groupby('symbol'))
+    t0 = time.time()
+    print(f'[one] 全量预测：{len(groups)} 只股票', flush=True)
     predict_list = []
     for i in tqdm(range(len(groups))):
         symbol = groups[i][0]
@@ -304,9 +314,11 @@ def get_one_all(check_days=0):
     predict_data['up_down'] = compute_aligned_updown(predict_data)
     predict_data = predict_data.sort_values('up_down', ascending=False).reset_index(drop=True)
     latest_date = predict_data['date'].max()
-    print(latest_date)
     predict_data = predict_data[predict_data['date'] == latest_date].copy().reset_index(drop=True)
     one_predict_name = os.path.join(os.path.dirname(__file__), 'one_all_predict.csv')
+    print(f'[one] 完成（{latest_date}）：{len(predict_data)} 行 × {predict_data.shape[1]} 列 -> '
+          f'{os.path.relpath(one_predict_name, ROOT)}（{time.time()-t0:.1f}s）', flush=True)
+    if VERBOSE: print(predict_data)
     predict_data.to_csv(one_predict_name, index=False)
 
 
@@ -330,8 +342,10 @@ def refresh_buy(target_date=None):
         )
     buy_data = buy_data.sort_values('buffett', ascending=False).reset_index(drop=True)
     buy_data = buy_data.sort_values('up_down', ascending=False).reset_index(drop=True)
-    print(buy_data)
     buy_predict_name = os.path.join(os.path.dirname(__file__), '../buy_predict.csv')
+    print(f'[one] buy_predict.csv：{len(buy_data)} 行 × {buy_data.shape[1]} 列 -> '
+          f'{os.path.relpath(buy_predict_name, ROOT)}', flush=True)
+    if VERBOSE: print(buy_data)
     buy_data.to_csv(buy_predict_name, index=False)
 
 

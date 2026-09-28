@@ -2,9 +2,14 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import os
+import time
+import sys
 import torch
 from zero_model import ZERO  # noqa: F401  确保 torch.load 整模型时类可反序列化
 from zero_features import FEATURE_COLUMNS, LOOKBACK_QUARTERS, CLIP_VALUE
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根（本脚本在 <root>/<model>/）
+VERBOSE = '--verbose' in sys.argv    # 默认只打摘要行；加 --verbose 才打整张表（旧行为）
 
 pd.set_option('future.no_silent_downcasting', True)
 
@@ -25,7 +30,7 @@ def select_device():
 
 
 def get_exchange_zero(exchange):
-    print(exchange)
+    t0 = time.time()
     # 检查GPU是否可用
     device = select_device()
     model_name = os.path.join(os.path.dirname(__file__), 'zero.pt')
@@ -46,7 +51,7 @@ def get_exchange_zero(exchange):
 
     # predict结果
     predict_list = []
-    print(f"Total groups: {len(groups)}")
+    print(f"[zero] {exchange} 预测：{len(groups)} 只股票", flush=True)
 
     for i in tqdm(range(len(groups))):
         group = groups[i][1]
@@ -108,11 +113,14 @@ def get_exchange_zero(exchange):
     predict_data = predict_data.sort_values('zero', ascending=False)
     predict_data = predict_data.reset_index(drop=True)
 
-    print(predict_data)
+    _out = data_name + "/zero_predict.csv"
+    print(f"[zero] {exchange} 完成：{len(predict_data)} 行 × {predict_data.shape[1]} 列 -> {os.path.relpath(_out, ROOT)}（{time.time()-t0:.1f}s）", flush=True)
+    if VERBOSE: print(predict_data)
     predict_data.to_csv(data_name + '/zero_predict.csv', index=False)
 
 
 def refresh_zero():
+    t0 = time.time()          # 总计时（下面的 per-exchange t0 是局部变量，互不影响）
     get_exchange_zero('SHZ')
     get_exchange_zero('SHH')
     data_name = os.path.join(os.path.dirname(__file__), '../data/')
@@ -121,8 +129,10 @@ def refresh_zero():
 
     predict_data = pd.concat([predict_data_shenzhen, predict_data_shanghai], axis=0)
     predict_values = predict_data.sort_values(by='zero', ascending=False).reset_index(drop=True)
-    print(predict_values)
     zero_predict_name = os.path.join(os.path.dirname(__file__), 'zero_predict.csv')
+    print(f"[zero] 汇总：{len(predict_values)} 行 -> {os.path.relpath(zero_predict_name, ROOT)}"
+          f"（{time.time()-t0:.1f}s）", flush=True)
+    if VERBOSE: print(predict_values)
     predict_values.to_csv(zero_predict_name, index=False)
 
 
