@@ -144,8 +144,13 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import os
+import time
+import sys
 import torch
 from three_model import THREE  # noqa: F401  确保 torch.load 整模型时类可反序列化
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根（本脚本在 <root>/<model>/）
+VERBOSE = '--verbose' in sys.argv    # 默认只打摘要行；加 --verbose 才打整张表（旧行为）
 
 pd.set_option('future.no_silent_downcasting', True)
 
@@ -166,7 +171,7 @@ def select_device():
 
 
 def get_exchange_growth_death(exchange):
-    print(exchange)
+    t0 = time.time()
     # 检查GPU是否可用
     device = select_device()
     model_name = os.path.join(os.path.dirname(__file__), 'three.pt')
@@ -217,7 +222,7 @@ def get_exchange_growth_death(exchange):
     # predict结果
     predict_list = []
     groups = list(features_data.groupby('symbol'))
-    print(f"Total groups: {len(groups)}")
+    print(f"[three] {exchange} 预测：{len(groups)} 只股票", flush=True)
     
     # 生成growth_death_train_data
     for i in tqdm(range(len(groups))):
@@ -308,11 +313,14 @@ def get_exchange_growth_death(exchange):
     predict_data = predict_data.sort_values('growth_death', ascending=False)
     predict_data = predict_data.reset_index(drop=True)
     
-    print(predict_data)
+    _out = data_name + "/grow_death_predict.csv"
+    print(f"[three] {exchange} 完成：{len(predict_data)} 行 × {predict_data.shape[1]} 列 -> {os.path.relpath(_out, ROOT)}（{time.time()-t0:.1f}s）", flush=True)
+    if VERBOSE: print(predict_data)
     predict_data.to_csv(data_name + '/grow_death_predict.csv', index=False)
 
 
 def refresh_growth_death():
+    t0 = time.time()          # 总计时（下面的 per-exchange t0 是局部变量，互不影响）
     get_exchange_growth_death('SHZ')
     get_exchange_growth_death('SHH')
     data_name = os.path.join(os.path.dirname(__file__), '../data/')
@@ -321,8 +329,10 @@ def refresh_growth_death():
 
     predict_data = pd.concat([predict_data_shenzhen, predict_data_shanghai], axis=0)
     predict_values = predict_data.sort_values(by='growth_death', ascending=False).reset_index(drop=True)
-    print(predict_values)
     three_predict_name = os.path.join(os.path.dirname(__file__), 'three_predict.csv')
+    print(f"[three] 汇总：{len(predict_values)} 行 -> {os.path.relpath(three_predict_name, ROOT)}"
+          f"（{time.time()-t0:.1f}s）", flush=True)
+    if VERBOSE: print(predict_values)
     predict_values.to_csv(three_predict_name, index=False)
 
 
