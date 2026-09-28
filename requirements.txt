@@ -1,0 +1,29 @@
+# 依赖清单（版本取自作者 2026-09 的运行环境：Windows + Python 3.11 + CUDA 12.1）
+#
+#   pip install -r requirements.txt
+#
+# ⚠️ torch 那一行：作者用的是 CUDA 12.1 的构建（`2.5.1+cu121`，见 https://pytorch.org 的
+#    安装选择器）。只有 CPU 的机器把 torch 换成 `pip install torch==2.5.1` 即可 ——
+#    所有 train.py 都会自检 CUDA kernel 是否真的可用，不可用就自动退回 CPU。
+
+# ---- 核心 ----
+numpy==1.26.4
+pandas==2.2.3
+scipy==1.15.3
+tqdm==4.67.3
+torch==2.5.1              # CPU 版；要 CUDA 就按 pytorch.org 的索引装对应 +cu 构建
+
+# ---- 数据源 / 存储 ----
+sqlalchemy==2.0.32        # MySQL 访问（get_stock_data.py / write_stock_data.py）
+pymysql                   # SQLAlchemy 的 mysql 驱动（DSN 里写的 mysql+pymysql://）
+certifi                   # write_stock_data.py 走 HTTPS 拉 FMP 数据用
+baostock                  # 可选：A 股日线的备用数据源（FMP 挂了才用，见 write_stock_data.py 的 try/except）
+
+# ---- 分析 / 诊断 ----
+captum==0.8.0             # 特征重要性（积分梯度），*/get_features_importance.py 用
+psutil==7.2.2             # 内存诊断脚本用
+matplotlib==3.10.1        # three/seven 的因子对比图
+seaborn==0.12.2
+
+# ⚠️ 没有列出的：MySQL 服务本身（DSN 指向 localhost:3306）、以及
+#    FMP / SMTP 的凭据 —— 都放在不入库的 config_local.py 里，见 README「配置」一节。
