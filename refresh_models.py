@@ -41,8 +41,8 @@
 
 ## 用法
 
-    python refresh_model.py                 # 全套：MySQL导出 -> 重生全部数据 -> 续训5个模型 -> 部署 -> 记指标
-    python refresh_model.py --dry-run       # 只打印要执行什么，不改任何东西（建议第一次先跑这个）
+    python refresh_models.py                 # 全套：MySQL导出 -> 重生全部数据 -> 续训5个模型 -> 部署 -> 记指标
+    python refresh_models.py --dry-run       # 只打印要执行什么，不改任何东西（建议第一次先跑这个）
 
 跑完看两个地方：
 
