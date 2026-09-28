@@ -14,8 +14,9 @@
   （7 是五个模型共用的口径：one/three/seven 的 train.py 写死 7，zero 2026-09-27 从 31 改成 7。）
 * EMA 关闭（`--ema 0` 是 nowcast 的默认）。
 * 验证口径 = 整体 Spearman IC（`eval_ic_overall`）的均值，取最好的那个 epoch 存盘。
-* **终端输出与另外四个模型同口径**（2026-09-27）：进度打
-  `Epoch: %d, step: %d, train loss: ... mean loss: ... min val loss: ...`，每个 epoch 打
+* **终端输出与另外四个模型同口径**：进度打
+  `Epoch: %d, train loss: ... mean loss: ... min val loss: ...`（**每步一行、不带 step 号**，
+  与 three/seven/zero 的 train.py 一字不差），每个 epoch 打
   `Epoch: %d, validate loss: %1.5f`（= 上面那个损失在验证集上的均值，`batch_loss` 一处定义、
   训练/验证共用）。但**存盘仍按验证 mean IC 选** —— 排名模型该看 IC，loss 只是"优化到哪了"
   的体温计。所以紧跟着多打一行 two 特有的 `验证 mean IC=... 逐头 [...]`，那才是决定存哪一版的数。
@@ -229,8 +230,9 @@ def main():
     ap.add_argument('--out', default=os.path.join(HERE, 'two.pt'), help='产出（默认 two/two.pt）')
     ap.add_argument('--test-symbols', default=os.path.join(HERE, 'test_symbols.txt'))
     ap.add_argument('--epochs', type=int, default=7)
-    ap.add_argument('--log-every', type=int, default=50,
-                    help='每多少步打一行进度（one/train.py 也是 50；0 = 不打）')
+    ap.add_argument('--log-every', type=int, default=1,
+                    help='每多少步打一行进度。默认 1 = 每步一行（= three/seven/zero 的行为）；'
+                         '调大可以少打日志，0 = 不打')
     ap.add_argument('--lr', type=float, default=1e-3)
     ap.add_argument('--batch', type=int, default=64)
     ap.add_argument('--seed', type=int, default=0)
@@ -398,10 +400,13 @@ def main():
             loss.backward(); opt.step()
             run += loss.item(); n += 1
             if a.log_every and n % a.log_every == 0:
-                # 与 one/train.py:296 一字不差的行格式（另外三个模型同）
-                print("Epoch: %d, step: %d, train loss: %1.5f, mean loss: %1.5f, "
-                      "min val loss: %1.5f" % (ep, n, loss.item(), run / n, best_val_loss),
-                      flush=True)
+                # 与 three/seven/zero 的 train.py **一字不差**的行格式（每步一行、不带 step 号），
+                # 外面套 try/except 也和它们一样 —— 打印出问题不该把几小时的训练带崩。
+                try:
+                    print("Epoch: %d, train loss: %1.5f, mean loss: %1.5f, min val loss: %1.5f" %
+                          (ep, loss.item(), run / n, best_val_loss), flush=True)
+                except Exception:
+                    pass
         vp, vy, val_loss = predict(model, va_loader, device)
         r = eval_ic_overall(vp, vy)
         score = float(np.nanmean([v for v in r.values()]))
