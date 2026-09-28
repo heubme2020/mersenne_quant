@@ -14,7 +14,7 @@
 | 9 个 `.md` | 实验记录与结论：`phase1_label_v2.md`（标签设计 v2）、`phase0_label_anchor_experiment.md`、`rd_plan_daily2fin.md`、`shiller.md`、`two_2x2_experiment.md`、`生产估值公式诊断与改进.md` 等 |
 | `phase0_results/` `phase0b_results/`（13 个 csv） | 标签/字段的可预测性筛选结果 |
 | `two_exp/` | 2×2 实验的脚本 + 符号表 + 隔夜结果（8 个 checkpoint 已清） |
-| `test_symbols_all31_889.txt` | 全局对齐的 889 只测试股票（`full_retrain.py` 与 `two/gen_train_data.py` 的兜底名单） |
+| `test_symbols_all31_889.txt` | 全局对齐的 889 只测试股票（`refresh_model.py` 与 `two/gen_train_data.py` 的兜底名单） |
 | 2 份论文 PDF | 这条线的理论依据（LFM / 基本面预测） |
 
 **已清掉的（可再生产物，见 `_trash_20260928/nowcast/`）**：`returns_eval*`（1.44 GB 逐样本 dump）、
@@ -48,4 +48,4 @@ python two/nowcast/train.py --arm both --suffix u9 --root C:/quant_data/nowcast4
 **two 的生产线不再依赖本目录**：`two/gen_train_data.py`（h5）与 `two/train.py` 是自足的
 （特征/模型/标签三块当年都逐字移植到了 `two/two_features.py` / `two/two_nowcast_model.py` /
 `two/two_labels.py`）。本目录现在的用途是**做变体实验**（u1~u8）与**查证当年的结论**，
-入口是 `full_retrain.py --nowcast`（默认不跑）。
+入口是 `refresh_model.py --nowcast`（默认不跑）。
