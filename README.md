@@ -91,19 +91,19 @@ cp config_local.example.py config_local.py     # 然后填值
 ## 五、一键重训
 
 ```bash
-python full_retrain.py --dry-run    # 先看计划
-python full_retrain.py              # 正式跑
+python refresh_model.py --dry-run    # 先看计划
+python refresh_model.py              # 正式跑
 ```
 
 | 阶段 | 做什么 |
 |---|---|
 | 1 | MySQL → `data/{EX}/*.csv`。**导出前后比对每个 CSV 的体积，任何文件缩小 >5% 就停下报警**（防"库里少了数据、模型跟着退化"） |
 | 2 | 重生五个模型的 h5（每个模型先清空自己的 `train/`，免得新旧采样口径混在一起） |
-| 3 | `retrain_all.py` 依次训练五个模型（**warm start**：接着已有 `.pt` 训）→ 部署到推理路径 → 把验证/测试指标追加到 `retrain_results.csv` |
+| 3 | 训练段：依次训练五个模型（**warm start**：接着已有 `.pt` 训）→ 部署到推理路径 → 把验证/测试指标追加到 `retrain_results.csv` |
 
 整链**以十小时计**（`two` 的 h5 单这一项就 ≈5~6 小时）。
 细粒度开关（`--stage data|train`、`--data-only <模型>`、`--only <模型>`、`--skip-export`…）
-见 `full_retrain.py` 的 docstring。
+见 `refresh_model.py` 的 docstring。
 
 ## 六、研究结论（含负面结果）
 
@@ -154,8 +154,9 @@ python full_retrain.py              # 正式跑
 
 ```
 refresh_candidates.py   每日链入口（星期路由 + 选票 + 邮件）
-full_retrain.py         一键重训（数据 → 训练 → 部署 → 记指标）
-retrain_all.py          五个模型的训练编排（warm start / 部署 / 指标解析）
+refresh_model.py        一键重训（数据 → 训练 → 部署 → 记指标）。**2026-09-28 三合一**：
+                        原 full_retrain.py（数据编排）+ retrain_all.py（训练编排）
+                        + 同名的旧脚本（已失效）合并成这一个入口
 get_stock_data.py       MySQL → CSV 导出
 write_stock_data.py     数据修补与指标表刷新（重试 / 多数据源兜底）
 schloss/                每股运营资本/股价（格雷厄姆 NCAV），独立一项
@@ -190,8 +191,8 @@ data/  */train/  *.pt   数据与权重（*.pt 只入库 5 个生产模型 + leg
 * **`seven` 的数据不含 KLS/KOE/SAU/TLV 四个交易所**：它们的季度历史不足 62 季，
   装不下"31 季过去 + 31 季未来"的标签窗口（`three` 只要 31 季、`zero` 只要 3 季，所以它们照常出文件）。
   这是过滤器的必然结果，不是故障。
-* **训练段（`full_retrain.py` 的阶段 3）还没有端到端跑过一次**：命令拼装、五个模型的 CLI、
+* **训练段（`refresh_model.py` 的 `--stage train`）还没有端到端跑过一次**：命令拼装、五个模型的 CLI、
   指标解析都已逐条验证（用真实日志），但整段串起来尚未实跑。
-* 代码里有几处**本机绝对路径**（如 `full_retrain.py` 的 `C:/quant_data/nowcast4`、
+* 代码里有几处**本机绝对路径**（如 `refresh_model.py` 的 `C:/quant_data/nowcast4`、
   `one/train.py` 的 `D:/quant_data/train_global`）—— 换机器要自己改。
 * 研究侧未完成项见 `估值方法与指标总结.md` §8.3。

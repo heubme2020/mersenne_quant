@@ -13,7 +13,7 @@ pd.set_option('future.no_silent_downcasting', True)
 # 2026-09-26 起**文件名按【角色】定**：two 这一档就读 `two.pt`，不再暴露来源。
 #   * 模型：`two.pt`（就放在本目录），3 个头。
 #     以前叫 `nowcast_u9.pt` —— 语义误导：它是"two 阶段的模型"，不是"nowcast 的 u9"。
-#     训练产物仍由 `two/nowcast/train.py` 写在 `nowcast/` 下，`retrain_all.py` 训完复制到这里。
+#     训练产物仍由 `two/nowcast/train.py` 写在 `nowcast/` 下，`refresh_model.py` 训完复制到这里。
 #     ⚠️ 落盘列名仍是硬编码的 gpMed7/revMed7/taMed7（不取自模型头名）——u9 的真实头名是
 #        gpMedP3F/revMedP3F/taMedP3F。列名只是下游认的标签，但**名不副实**，别拿它当语义。
 #     gpMed7/revMed7/taMed7 = 未来 7 季「毛利/营收/总资产」中位数的前后变化 ÷ 总资产[jc]
@@ -149,7 +149,7 @@ def get_two_candidates(check_days=0, target_date=None):
     # 模型文件按【角色】命名：two 这一档读 `two.pt`（不再叫 nowcast_u9.pt 那类暴露来源的名字）。
     # 换用 u9 变体的依据：终点指标（逐日截面 IC vs 未来收益）上的**配对比较** —— 同一批
     # 44,352 行上 u9 至少不差于 u6（1/3 季打平、7 季更好），且多覆盖 1,818 行 / 11 只股票。
-    # 详见 `two/nowcast/paired_u6_u9.py`、`two/nowcast/variants.py` 的 u9 段、`retrain_all.py` 的 two 配方。
+    # 详见 `two/nowcast/paired_u6_u9.py`、`two/nowcast/variants.py` 的 u9 段、`refresh_model.py` 的 two 配方。
     # ⚠️ `two.pt` 必须存在，否则本文件会在这里直接抛异常、每日选票全断。
     # 回退（同架构换权重）：cp _snapshot_20260926/two/nowcast_u6.pt two/two.pt
     model_name = os.path.join(os.path.dirname(__file__), 'two.pt')

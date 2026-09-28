@@ -62,4 +62,24 @@
 
 ## 未发布
 
-（后续变更记在这里）
+### 变更
+
+* **三个重训脚本合并成一个入口 `refresh_model.py`**（2026-09-28）：
+
+  | 原来的 | 职责 |
+  |---|---|
+  | `full_retrain.py` | 数据编排：MySQL 导出 → 重生五个模型的 h5 →（可选）nowcast 分块 |
+  | `retrain_all.py` | 训练编排：五模型 warm start / 部署 / 解析验证与测试指标 |
+  | `refresh_model.py`（旧） | 更早的"数据+训练一把梭" —— 2026-09 已失效（模块级裸导入直接 ImportError、缺 two、训练在同进程里跑） |
+
+  合并为 `refresh_model.py`，**语义不变**：`--stage data|train|all`、`--only`、`--data-only`、
+  `--nowcast` / `--variants` / `--nowcast-root`、`--skip-export` / `--skip-h5`、`--dry-run` 全部保留。
+  合并前逐项比对：五个模型的配方（10 个字段 × 5 个）、三处测试指标正则、`H5_JOBS`、
+  nowcast 相关常量 —— **全部逐字段一致**。
+
+* `retrain_all.py` 暂时保留为**转发垫片**（10 行，不含逻辑）：2026-09-28 07:57 启动的一键重训
+  正在跑，它的阶段 3 会以子进程调用这个文件名。**等那次跑完即可删除**，
+  等价入口是 `refresh_model.py --stage train`。
+* `full_retrain.py` 已移入 `_trash_20260928/`（正在跑的进程已把它读进内存，不受影响）。
+* 文档里的脚本名引用同步更新：`README.md`、`two/nowcast/README.md`、`two/train.py`、
+  `two/get_two_predict.py`、`two/nowcast/variants.py`。

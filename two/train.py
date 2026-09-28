@@ -235,7 +235,7 @@ def main():
     ap.add_argument('--batch', type=int, default=64)
     ap.add_argument('--seed', type=int, default=0)
     # 验证集划分种子：默认 12345（与 one/nowcast 同，保证手工跑可复现），但**允许环境变量覆盖**
-    # —— `retrain_all.py` 每次重训会注入随机的 VAL_SPLIT_SEED，让验证划分每轮不同
+    # —— `refresh_model.py` 每次重训会注入随机的 VAL_SPLIT_SEED，让验证划分每轮不同
     # （否则报出来的"验证 mean IC"会长期盯着同一个划分、越比越乐观）。
     # one/train.py:226 是同一个写法；three/seven/zero 本来就用系统熵，不需要这个。
     ap.add_argument('--val-seed', type=int, default=int(os.environ.get('VAL_SPLIT_SEED', VAL_SEED)))
