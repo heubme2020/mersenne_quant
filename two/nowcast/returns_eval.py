@@ -51,6 +51,15 @@ from train import load_split, ARMS           # noqa: E402
 import labels as L                           # noqa: E402
 import variants as V                         # noqa: E402
 
+# Windows 控制台默认 GBK，而本文件会打印 `−`（U+2212）等非 GBK 字符 —— 从 GBK 控制台直接跑
+# 会 UnicodeEncodeError。与其它脚本同一套修法（2026-09-28 扫描后补齐）。
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
+
 ROOT_DATA = L.ROOT
 HORIZONS = [1, 3, 7]
 DAYS_PER_Q = 63          # 1 季 ≈ 63 交易日（与标签窗口一致）

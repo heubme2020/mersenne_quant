@@ -1,4 +1,5 @@
 import torch
+import sys
 import torch.nn as nn
 from captum.attr import IntegratedGradients
 import pandas as pd
@@ -9,6 +10,16 @@ from ratio_model import RATIO
 import os
 import random
 from tqdm import tqdm
+
+# Windows 控制台默认 GBK，而本文件会打印 `⚠️` / `🎉` 这类非 GBK 字符 —— 走到那条分支就会
+# UnicodeEncodeError 崩掉，而且**往往是在活儿干完之后**才崩（2026-09-26 zero/gen 就这么"失败"过：
+# 日志里 already 写着总量，然后崩在一句庆祝打印上）。与其它脚本同一套修法。2026-09-28 扫描后补齐。
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
 
 def get_data_input(data):
     input_data = data.iloc[:, :-1]

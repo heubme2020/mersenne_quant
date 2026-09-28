@@ -1,12 +1,23 @@
 import numpy as np
 import pandas as pd
 import os
+import sys
 import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from zero_model import ZERO
 from torch.utils.data import Dataset, DataLoader
+
+# Windows 控制台默认 GBK，而本文件会打印 `⚠️` / `🎉` 这类非 GBK 字符 —— 走到那条分支就会
+# UnicodeEncodeError 崩掉，而且**往往是在活儿干完之后**才崩（2026-09-26 zero/gen 就这么"失败"过：
+# 日志里 already 写着总量，然后崩在一句庆祝打印上）。与其它脚本同一套修法。2026-09-28 扫描后补齐。
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
 
 class Dataset(Dataset):
     def __init__(self, h5_file_list):
