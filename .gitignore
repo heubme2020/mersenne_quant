@@ -1,0 +1,73 @@
+# ============================================================================
+#  2026-09-28 首次纳入版本控制时写的
+#
+#  原则：**代码、配置、文档、以及 5 个生产模型**入库；
+#        一切"能由脚本重建"或"体积巨大"的产物不入库（留在盘上，只是不被 git 跟踪）。
+#        不入库 ≠ 删除 —— 这些文件在磁盘上照常存在、照常被脚本读写。
+# ============================================================================
+
+# ---- 数据：MySQL 导出的 CSV（14 GB），由 get_stock_data.py 重建 ----
+data/
+
+# ---- 训练数据：各模型的 h5（合计 327 GB），由 */gen_train_data.py 重建 ----
+*/train/
+
+# ---- 回退快照（14 GB：5 个部署模型 + CSV 副本）----
+#    路径见 full_retrain.py 的 docstring「跑之前的状态前提」
+_snapshot_*/
+
+# ---- 清理暂存（确认无误后手动 rm -rf，见其 README）----
+_trash_*/
+
+# ---- 各模型 train.py 自己写的历史 .pt 备份 ----
+*/backup/
+
+# ---- nowcast 实验线的输出（1.6 GB）----
+#    ⚠️ .py / .md / test_symbols_all31_889.txt 是实验线本身，照常入库；
+#       这里排掉的只是"跑出来的结果"。
+nowcast/results/
+nowcast/returns_eval*/
+nowcast/two_exp/
+nowcast/phase0*_results/
+nowcast/*.pkl
+
+# ---- zero 的标签/特征验证输出（单 validate_samples.csv 就 134 MB）----
+zero/validate_*.csv
+zero/validate_samples.csv
+
+# ---- 本机凭据：**绝不入库** ----
+#    config_local.py 里是 MySQL DSN、FMP API key、邮箱授权码与收件人名单
+#    （2026-09-28 从 get_stock_data.py / write_stock_data.py / refresh_candidates.py 抽出来的）。
+#    入库的是占位模板 config_local.example.py。
+config_local.py
+
+# ---- 模型权重：只入库【5 个生产 .pt + two_legacy.pt】----
+#    2026-09-28 决定：模型可以传（最大的才 4 MB），但只传在用的这几个；
+#    各轮实验的权重已经清进 _trash_20260928/ 了，不会误传。
+#    生产的是每日链 get_*_predict.py 真正 torch.load 的那五个；
+#    two_legacy.pt 是 two/get_two_predict_legacy.py 那条回退路径在用（旧 TWO 架构）。
+*.pt
+!one/one.pt
+!two/two.pt
+!two/two_legacy.pt
+!three/three.pt
+!seven/seven.pt
+!zero/zero.pt
+
+# ---- 不外传的文档：内部系统说明 ----
+#    2026-09-28 推公开仓库前决定 —— 文件留在本地，只是不跟踪。
+系统说明.pdf
+系统优化.txt
+
+# ---- 运行产物：日志与预测 CSV（每天/每次重训都变，可再生）----
+#    ⚠️ .gitignore **不支持行内注释**（`#` 只在行首算注释）—— 下面这几行千万别在后面写汉字，
+#    否则整行会被当成模式、什么也匹配不到（2026-09-28 第一次写就这么错过一次）。
+*.log
+*.err
+*_predict*.csv
+*_ic_by_date.csv
+
+# ---- Python / IDE ----
+__pycache__/
+*.pyc
+.idea/
