@@ -4,8 +4,9 @@
 
     full_retrain.py    数据编排：MySQL 导出 CSV → 重生各模型 h5 →（可选）nowcast 分块
     retrain_all.py     训练编排：五个模型续训 / 部署 / 解析验证与测试指标
-    refresh_model.py   更早的"数据+训练一把梭"（2026-09 已失效：模块级裸导入直接 ImportError、
-                       缺 two、训练在同进程里跑；本次重写为本文件）
+    refresh_model.py   ← 更早的"数据+训练一把梭"（**注意是单数的旧名**，2026-09 已失效：
+                       模块级裸导入直接 ImportError、缺 two、训练在同进程里跑）。
+                       本次把它们三个重写成**复数**的 refresh_models.py（本文件）。
 
 合并后语义不变，入口只剩这一个：`--stage data` 跑数据、`--stage train` 只训练、默认 all 全跑。
 
