@@ -1,23 +1,3 @@
-> ⚠️ **2026-09-28 迁移说明**：本记录原在 `one_5win/实验结果.md`。清理 `one_5win/` 时，
-> 记录连同 `screen_results/`（26 个筛选表）一起迁进 `one/`，作为"new24 因子集怎么来的"的存档；
-> **记录正文一字未改**。
->
-> 下面的复现命令引用的脚本（`one_5win/screen.py` / `select.py` / `gen_train_data.py` / `train.py` /
-> `factor_pool.py` / `feature_sets.py` / `evaluate.py` / `one_model.py`）与 10 个实验 `.pt`
-> 已移入 `_trash_20260928/one_5win/`。要复现先把它们移回：
->
-> ```bash
-> mkdir -p one_5win && mv _trash_20260928/one_5win/* one_5win/
-> ```
-> 迁移的理由：方案已定案（`FACTOR_MODE=new24` 已是 `one/factor_config.py` 的默认），
-> 该目录的代码已被 `one/` 里的现役实现取代（见本文末尾的"改动清单"）。
-> 另外，`one_backup_20260914/`（本记录末尾提到的改动前备份）现在也在 `_trash_20260928/` 里。
->
-> **2026-09-28 补充**：原 `<root>/factor_screen/` 目录也搬进来了 —— 现在是 `one/factor_screen/`
-> （脚本 4 个 + 结果表 4 个），所以本文里 `factor_screen/xxx` 的引用都变成了 `one/factor_screen/xxx`。
-> 注意那几个脚本**本来就跑不起来了**：它们筛的因子库 `<root>/zoo/`（alpha101/gtja191/qlib158/academic）
-> 和 `<root>/one_v2/` 都已不存在 —— 它们是那次筛选的存档，产物（`top31.csv` / `ts_top24.csv`）才是证据。
-
 # one 因子集替换实验（沙盒 one_5win）
 
 > 日期：2026-09-13　脚本：`factor_pool.py` / `screen.py` / `select.py` / `gen_train_data.py` / `train.py`
