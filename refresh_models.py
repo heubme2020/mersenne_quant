@@ -469,6 +469,28 @@ def stage_export(a):
     return ok
 
 
+def gen_h5(name, cmd, dry=False):
+    """生成单个模型的 h5。返回是否成功（供逐模型流水线决定是否继续训练该模型）。"""
+    print(f'\n───── [{name}] 重生 h5', flush=True)
+    rc, _, log = sh(cmd, f'gendata_{name}', dry=dry)
+    if rc != 0:
+        print(f'  ⚠️ {name} 的 h5 重生失败 —— 该模型将跳过训练。')
+        return False
+    if not dry:
+        d = os.path.join(ROOT, name, 'train')
+        n = len(os.listdir(d)) if os.path.isdir(d) else 0
+        print(f'  {name}/train 现有 {n:,} 个 h5', flush=True)
+        _bad = failed_exchanges(log)
+        if _bad:
+            print(f'  ⚠️ {name} 有 {len(_bad)} 个交易所产出 0 个文件：{_bad}')
+            print(f'      （这行是【报告】不是报错：gen 吞掉单所异常、照常退 0，所以只看'
+                  f'退出码发现不了。但如果上次它们有产出、这次归零，那就是真出问题了。）')
+            print(f'      已知的正常例子：seven 的 KLS/KOE/SAU/TLV —— 四个市场历史不足 62 季，'
+                  f'装不下 31 过去 + 31 未来的标签窗口（three 只要 31 季、zero 只要 3 季，'
+                  f'所以它们照常出文件）。')
+    return True
+
+
 def stage_data(a):
     if a.skip_export:
         print(f'\n{"="*100}\n  （--skip-export：跳过 MySQL 导出，直接用现有 data/ 重生）\n{"="*100}',
@@ -490,23 +512,8 @@ def stage_data(a):
         if unknown:
             print(f'  ⚠️ --data-only 里有未知模型（已忽略）：{unknown}', flush=True)
         for name, cmd in jobs:
-            print(f'\n───── [{name}] 重生 h5', flush=True)
-            rc, _, log = sh(cmd, f'gendata_{name}', dry=a.dry_run)
-            if rc != 0:
-                print(f'  ⚠️ {name} 的 h5 重生失败 —— 后续 {name} 无法训练。')
+            if not gen_h5(name, cmd, a.dry_run):
                 return False
-            if not a.dry_run:
-                d = os.path.join(ROOT, name, 'train')
-                n = len(os.listdir(d)) if os.path.isdir(d) else 0
-                print(f'  {name}/train 现有 {n:,} 个 h5', flush=True)
-                _bad = failed_exchanges(log)
-                if _bad:
-                    print(f'  ⚠️ {name} 有 {len(_bad)} 个交易所产出 0 个文件：{_bad}')
-                    print(f'      （这行是【报告】不是报错：gen 吞掉单所异常、照常退 0，所以只看'
-                          f'退出码发现不了。但如果上次它们有产出、这次归零，那就是真出问题了。）')
-                    print(f'      已知的正常例子：seven 的 KLS/KOE/SAU/TLV —— 四个市场历史不足 62 季，'
-                          f'装不下 31 过去 + 31 未来的标签窗口（three 只要 31 季、zero 只要 3 季，'
-                          f'所以它们照常出文件）。')
 
     if a.data_only is not None:
         print('\n  （--data-only：只重生上面那些 h5，**跳过 nowcast 分块**。'
@@ -662,18 +669,8 @@ def run_one(name, cfg, dry=False):
                 log=os.path.relpath(log, ROOT))
 
 
-def stage_train(a):
-    """逐个训练 5 个模型（warm start），训完部署 + 把指标追加到 retrain_results.csv。"""
-    names = a.only or list(MODELS)
-    print(f'\n{"="*100}\n  训练 {len(names)} 个模型：{" ".join(names)}（warm start）\n{"="*100}',
-          flush=True)
-    rows, failed = [], []
-    for n in names:
-        r = run_one(n, MODELS[n], dry=a.dry_run)
-        if r:
-            rows.append(r)
-        else:
-            failed.append(n)
+def _report(rows, failed, dry=False):
+    """把本轮训练结果写进 retrain_results.csv 并打印汇总。返回整体是否成功。"""
     if rows:
         header = 'timestamp,model,val_metric,val,ic_metric,ic,icir_metric,icir,log\n'
         # 迁移旧 7 列格式（test_metric/test）→ 新 9 列格式（ic/icir）：列数对不上会把
@@ -698,16 +695,63 @@ def stage_train(a):
         for r in rows:
             print(f'  {r["model"]:8s}{r["val_name"]:>16s}{r["val"]:>12}'
                   f'{_fmt(r["ic"]):>10}{_fmt(r["icir"]):>10}')
-    if a.dry_run:
+    if dry:
         return True
-    # 退出码/返回值：单个模型失败不影响其余四个（上面逐个跑、逐个部署），
-    # 但整体必须让对方看得见 —— 否则"五个模型全失败"也会报"全套完成 · 成功"。
+    # 退出码/返回值：单个模型失败不影响其余（逐个跑、逐个部署），
+    # 但整体必须让对方看得见 —— 否则"全部失败"也会报"全套完成 · 成功"。
     if failed or not rows:
-        print(f'\n  ⚠️ 有模型没跑成：{failed or "（一个都没产出）"} —— 训练段判为失败'
+        print(f'\n  ⚠️ 有模型没跑成：{failed or "（一个都没产出）"} —— 判为失败'
               f'（日志见 retrain_logs/）。已训完的模型已经部署过了，没训的保持原样。')
         return False
     print(f'\n{"="*100}\n  全套完成。测试指标见 {os.path.relpath(RESULTS, ROOT)}\n{"="*100}')
     return True
+
+
+def stage_train(a):
+    """逐个训练 5 个模型（warm start），训完部署 + 把指标追加到 retrain_results.csv。"""
+    names = a.only or list(MODELS)
+    print(f'\n{"="*100}\n  训练 {len(names)} 个模型：{" ".join(names)}（warm start）\n{"="*100}',
+          flush=True)
+    rows, failed = [], []
+    for n in names:
+        r = run_one(n, MODELS[n], dry=a.dry_run)
+        if r:
+            rows.append(r)
+        else:
+            failed.append(n)
+    return _report(rows, failed, a.dry_run)
+
+
+def stage_all(a):
+    """逐模型流水线：gen → train → 删数据 → 下一个模型。
+
+    与旧的"先 gen 全部 5 个模型、再逐个训练"不同，这里每训完一个模型就删掉它的 train/，
+    磁盘峰值从「5 个模型 h5 同时占盘」降到「单个模型的 h5」。
+    """
+    if not a.skip_export:
+        if not stage_export(a):
+            return False
+
+    gen_map = dict(H5_JOBS)
+    names = a.only or [n for n, _ in H5_JOBS]
+    print(f'\n{"="*100}\n  逐模型流水线（gen → train → 删数据）：{" ".join(names)}\n{"="*100}',
+          flush=True)
+    rows, failed = [], []
+    for name in names:
+        if name not in gen_map or name not in MODELS:
+            print(f'  ⚠️ 未知模型 {name}，跳过。')
+            failed.append(name)
+            continue
+        # 生成该模型的 h5 → 训练（run_one 训练完自动删 train/）→ 下一个模型
+        if not gen_h5(name, gen_map[name], a.dry_run):
+            failed.append(name)
+            continue
+        r = run_one(name, MODELS[name], dry=a.dry_run)
+        if r:
+            rows.append(r)
+        else:
+            failed.append(name)
+    return _report(rows, failed, a.dry_run)
 
 
 def main():
@@ -757,12 +801,13 @@ def main():
     ok = True
     if a.stage == 'export':
         ok = stage_export(a)
-    elif a.stage in ('data', 'all'):
+    elif a.stage == 'data':
         ok = stage_data(a)
-    if ok and a.stage in ('train', 'all'):
-        if a.stage == 'train':
-            print('  （--stage train：跳过数据重生，直接用现有数据训练）', flush=True)
+    elif a.stage == 'train':
+        print('  （--stage train：跳过数据重生，直接用现有数据训练）', flush=True)
         ok = stage_train(a)
+    else:  # all：逐模型 gen -> train -> 删数据 -> 下一个
+        ok = stage_all(a)
 
     print(f'\n  总用时 {(time.time()-t0)/60:.1f} 分钟   结果 {"成功" if ok else "失败"}')
     sys.exit(0 if ok else 1)
