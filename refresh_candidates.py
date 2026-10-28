@@ -138,16 +138,38 @@ def refresh(target_date=None):
         # refresh_one_predict()
 
 
+def _send_mail(subject, body):
+    # 邮箱配置（发件人/授权码/收件人名单都在 config_local.py —— **不入库**，见 .gitignore。
+    # 2026-09-28 抽出来的：原来授权码与 6 个收件人邮箱是明文，推公开仓库会泄漏。）
+    smtp_server, port = SMTP_SERVER, SMTP_PORT
+    sender, password = MAIL_SENDER, MAIL_PASSWORD
+    receiver_list = list(MAIL_RECEIVERS)
+
+    message = MIMEMultipart()
+    message["From"] = sender
+    message["Subject"] = subject
+    message.attach(MIMEText(body, "plain"))
+    message["To"] = ", ".join(receiver_list)
+    try:
+        with smtplib.SMTP_SSL(smtp_server, port) as server:
+            server.login(sender, password)
+            server.sendmail(sender, receiver_list, message.as_string())
+    except smtplib.SMTPResponseException as e:
+        # 忽略掉 (-1, b'\x00\x00\x00') 这种非标准错误
+        if e.smtp_code == -1:
+            print("邮件已发送成功，但服务器返回了非标准关闭响应。")
+        else:
+            raise
+
+
 def send_candidates(target_date=None):
     if target_date is None:
         today = datetime.datetime.now().date()
         weekday = today.weekday()
         if weekday == 5 or weekday == 6:
-            # return
-            refresh()
-        else:
-            # return
-            refresh()
+            # 周末不跑数据也不出候选，静默返回，不发邮件
+            return
+        refresh()
     else:
         refresh(target_date)
     buy_name = os.path.join(os.path.dirname(__file__), 'buy_predict.csv')
@@ -189,31 +211,10 @@ def send_candidates(target_date=None):
     one_hundred_and_twenty_seven_buy = one_hundred_and_twenty_seven_buy_data['symbol'].iloc[0]
     print(one_hundred_and_twenty_seven_buy)
 
-    # 邮箱配置（发件人/授权码/收件人名单都在 config_local.py —— **不入库**，见 .gitignore。
-    # 2026-09-28 抽出来的：原来授权码与 6 个收件人邮箱是明文，推公开仓库会泄漏。）
-    smtp_server, port = SMTP_SERVER, SMTP_PORT
-    sender, password = MAIL_SENDER, MAIL_PASSWORD
-    receiver_list = list(MAIL_RECEIVERS)
-
-    # 构建邮件
-    message = MIMEMultipart()
-    message["From"] = sender
-    message["Subject"] = str(date) + ':推的票'
-
+    subject = str(date) + ':推的票'
     body = ("1: " + one_buy + '\n' + "3: " + three_buy + '\n' + "7: " + seven_buy + '\n' +
              "31: " + thirty_one_buy + '\n' + '127: ' + one_hundred_and_twenty_seven_buy)
-    message.attach(MIMEText(body, "plain"))
-    message["To"] = ", ".join(receiver_list)
-    try:
-        with smtplib.SMTP_SSL(smtp_server, port) as server:
-            server.login(sender, password)
-            server.sendmail(sender, receiver_list, message.as_string())
-    except smtplib.SMTPResponseException as e:
-        # 忽略掉 (-1, b'\x00\x00\x00') 这种非标准错误
-        if e.smtp_code == -1:
-            print("邮件已发送成功，但服务器返回了非标准关闭响应。")
-        else:
-            raise
+    _send_mail(subject, body)
 
 
 if __name__ == '__main__':

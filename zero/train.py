@@ -59,6 +59,19 @@ def pairwise_rank_loss(pred, target, margin=0.1):
     return torch.relu(margin - pd_ * td.sign())[mask].mean()
 
 
+def rank_ic(pred, target):
+    """Spearman 秩相关（排序 IC）—— zero 的测试指标。
+
+    zero 是避雷模型，排序（哪些股票回撤风险更高）比回归误差更有意义，且能与另外四个模型的
+    排序指标（ICIR/IC）横向比较。pred/target 均为一维 numpy 数组。
+    """
+    if pred.std() == 0 or target.std() == 0:
+        return float('nan')           # 有一边是常量 -> 秩相关无定义
+    rp = np.argsort(np.argsort(pred))
+    rt = np.argsort(np.argsort(target))
+    return float(np.corrcoef(rp, rt)[0, 1])
+
+
 
 def select_device():
     """选择设备：优先 CUDA，但会实际跑一个 matmul 验证 kernel 可用，否则退回 CPU。
@@ -88,10 +101,14 @@ def train_zero_model():
     # 其余股票再按 7:3 隔离成 train/val。
     # 文件名形如 {symbol}_{endDate}.h5，symbol 可能含下划线，故按最后一个下划线切。
     def _symbol_of(f):
-        return os.path.basename(f)[:-3].rsplit('_', 1)[0]
+        base = os.path.basename(f)[:-3]
+        head, _date = base.rsplit('_', 1)
+        ex, sym = head.split('_', 1) if '_' in head else ('', head)
+        return f'{ex}:{sym}' if ex else sym
 
     TEST_N = 127 * 7  # 测试集股票数（127×7，扩大测试样本以降低 IC 噪声，对齐 seven/three）
     TEST_SEED = int(os.environ.get('TEST_SEED', 42))  # 可用环境变量 TEST_SEED 覆盖（每次训练换测试集）
+    MIN_STOCKS = 5  # 逐日截面 IC 只统计当天样本数 ≥ 这个值的锚点日（对齐 evaluate.py 的默认）
     symbols = sorted({_symbol_of(f) for f in h5_files})
     if len(symbols) <= TEST_N:
         raise ValueError(f"股票总数 {len(symbols)} 不足，无法抽出 {TEST_N} 只测试股票")
@@ -229,16 +246,42 @@ def train_zero_model():
 
     # ---- 测试集评估（2026-09-26 加）：用留出的 test_files，口径与验证集完全一致 ----
     # 让重训流程（训 3 遍选验证最优、并汇报测试集结果）有一个统一的机器可读输出。
+    # 2026-09-30 起测试指标从 MSE loss 改成 Spearman 秩相关（IC）：zero 是避雷模型，排序比
+    # 回归误差更有意义，也和另外四个模型的排序指标能横向比。
     if test_files:
         best = torch.load(model_name, map_location=device, weights_only=False).eval()
-        tl = 0.0
+        preds, trues = [], []
         with torch.no_grad():
             for data_input, three in test_dataloader:
                 data_input = data_input.to(device, non_blocking=True)
                 three = three.to(device, non_blocking=True)
-                tl += criterion_mse(three, best(data_input)).item()
-        mean_test_loss = tl / max(len(test_dataloader), 1)
-        print(f'[TEST] test_loss={mean_test_loss:.6f}')
+                p = best(data_input)
+                preds.append(p.reshape(-1).cpu().numpy())
+                trues.append(three.reshape(-1).cpu().numpy())
+        preds = np.concatenate(preds)
+        trues = np.concatenate(trues)
+        test_ic = rank_ic(preds, trues)
+        print(f'[TEST] test_ic={test_ic:.4f}  (n={len(preds)})')
+        # 逐日截面 IC / ICIR（2026-10-02 加）：与 one/three/seven evaluate.py 那张表的
+        # IC（逐日 IC 均值）/ ICIR（均值÷标准差）同口径，供 refresh_models 抓取、横向比。
+        # test_dataloader 是 shuffle=False，preds/trues 与 test_files 一一对应 ——
+        # 从文件名还原每个样本的 endDate，按锚点日分组算截面秩相关。
+        assert len(preds) == len(test_files), f'预测数 {len(preds)} != 测试文件数 {len(test_files)}'
+        dates = np.array([os.path.basename(f)[:-3].rsplit('_', 1)[1] for f in test_files])
+        df_ic = pd.DataFrame({'date': dates, 'pred': preds, 'true': trues})
+        daily = []
+        for _, g in df_ic.groupby('date'):
+            if len(g) < MIN_STOCKS:
+                continue
+            daily.append(rank_ic(g['pred'].values, g['true'].values))
+        daily = np.array(daily, dtype='f8')
+        daily = daily[~np.isnan(daily)]
+        if len(daily):
+            ic_daily = float(np.nanmean(daily))
+            icir = ic_daily / np.nanstd(daily) if np.nanstd(daily) > 0 else float('nan')
+        else:
+            ic_daily = icir = float('nan')
+        print(f'[TEST] 逐日IC={ic_daily:+.4f}  逐日ICIR={icir:+.4f}  (n_dates={len(daily)})')
     print(f'[VAL]  best_val_loss={best_val_loss:.6f}')
 
 

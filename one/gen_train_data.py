@@ -144,7 +144,7 @@ def add_technical_factor(data):
     return data
 
 
-def gen_group_train_data(groups, train_folder, sample_rate):
+def gen_group_train_data(groups, train_folder, sample_rate, exchange):
     """
     生成训练数据，并在多进程中运行。
     groups: 股票分组列表
@@ -166,7 +166,7 @@ def gen_group_train_data(groups, train_folder, sample_rate):
 
         for j in range(DAYS_INPUT, group_data_length - AUX_OUTPUT_DAYS - 1):
             date = daily_group['date'].iloc[j]
-            data_basename = symbol + '_' + str(date) + '.h5'
+            data_basename = exchange.upper() + '_' + symbol + '_' + str(date) + '.h5'
             data_name = os.path.join(train_folder, data_basename)
 
             if random.random() < sample_rate:  # 按抽样率随机保存
@@ -271,7 +271,7 @@ def gen_exchange_one_train_data(exchange, train_folder, sample_rate):
     for i in range(NUM_PROCESSES):
         start = i * split_size
         end = (i + 1) * split_size if i < NUM_PROCESSES - 1 else group_count
-        groups_list_for_starmap.append((groups[start:end], train_folder, sample_rate))
+        groups_list_for_starmap.append((groups[start:end], train_folder, sample_rate, exchange))
 
     print(f"Starting {NUM_PROCESSES} processes for {group_count} groups.")
 
@@ -284,16 +284,35 @@ def gen_exchange_one_train_data(exchange, train_folder, sample_rate):
 
 
 def gen_one_train_data(exchanges, train_folder, sample_rate):
-    # 无条件清空 —— 与 zero/three/seven 逐字一致（2026-09-27 对齐，原来这句是
-    # "Cleaning existing folder: ..." + 不带 ignore_errors 的 rmtree，措辞和健壮性两处都不一样）。
-    print("Clearing and creating 'train' folder...")
-    shutil.rmtree(train_folder, ignore_errors=True)
-    os.makedirs(train_folder, exist_ok=True)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(current_dir, '..', 'data')
+    all_exchanges = sorted(d for d in os.listdir(data_dir)
+                           if os.path.isdir(os.path.join(data_dir, d)))
+
+    if exchanges:
+        # 补跑：只跑指定所，**不清空** train/（对齐 three/seven/zero 的 --exchanges 语义）
+        print(f"指定交易所 {exchanges} —— 保留现有 train/ 内容，只补跑这几个所。")
+        os.makedirs(train_folder, exist_ok=True)
+        want = {e.upper() for e in exchanges}
+        exchange_list = [e for e in all_exchanges if e.upper() in want]
+        nosuch = sorted(want - {e.upper() for e in exchange_list})
+        if nosuch:
+            print(f"⚠️ --exchanges 里这些名字在 data/ 下不存在（已忽略）：{nosuch}")
+        if not exchange_list:
+            print("⚠️ 没有任何交易所匹配，什么都没跑。")
+            return
+    else:
+        # 全量重跑：无条件清空 —— 与 zero/three/seven 逐字一致（2026-09-27 对齐，原来这句是
+        # "Cleaning existing folder: ..." + 不带 ignore_errors 的 rmtree，措辞和健壮性两处都不一样）。
+        print("Clearing and creating 'train' folder...")
+        shutil.rmtree(train_folder, ignore_errors=True)
+        os.makedirs(train_folder, exist_ok=True)
+        exchange_list = all_exchanges
 
     failed_list = []
 
     total_files = 0
-    for exchange in exchanges:
+    for exchange in exchange_list:
         print(f"\n--- Starting processing for {exchange} ---", flush=True)
         try:
             total_files += gen_exchange_one_train_data(exchange, train_folder, sample_rate) or 0
@@ -313,9 +332,12 @@ def gen_one_train_data(exchanges, train_folder, sample_rate):
 def main():
     import argparse
     p = argparse.ArgumentParser(description='生成训练数据')
-    p.add_argument('--exchanges', nargs='+', default=['SHZ', 'SHH'])
+    p.add_argument('--exchanges', nargs='+', default=None,
+                   help='只跑 data/ 下这几个交易所（如 NASDAQ NYSE）。指定时**不清空** train/，'
+                        '用于补跑；不指定＝全量重跑（先清空 train/），这也是 refresh_models 的用法')
     p.add_argument('--folder', default='train')
-    p.add_argument('--rate', type=float, default=1.0 / 31.0)
+    # 全球采样拉稀到 1/127（对齐 two 的 --train-rate，见 [[two-train-rate-1-127]]）：股票多、控制样本量。
+    p.add_argument('--rate', type=float, default=1.0 / 127.0)
     args = p.parse_args()
     current_dir = os.path.dirname(os.path.abspath(__file__))
     train_folder = args.folder if os.path.isabs(args.folder) else os.path.join(current_dir, args.folder)

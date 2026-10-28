@@ -240,12 +240,11 @@ def get_one_candidates(check_days=0, target_date=None):
         daily_data = merge_new_factors(daily_data)
 
     two_data = pd.read_csv(data_name + '../two/two_predict.csv')
-    # 2026-09-25：two 阶段换成 nowcast 模型，三个头的列名随之改成 gpMed7/revMed7/taMed7
-    # （旧名 seven/thirty_one/two_hundred_and_twenty_seven 语义已完全不同）。
-    # ⚠️ 这个列表必须与 two/get_two_predict.py 写出的列名一致，否则 KeyError。
+    # 2026-10-27：三个头不透传；保留 two 的 up_down（营收口径砍半值 = revMed7×总资产/市值），
+    # 改名 up_down_rev 以免和 one 的 up_down（择时分）冲突，透传到 buy_predict.csv。
     two_data.drop(columns=['gpMed7', 'revMed7', 'taMed7'], inplace=True)
     two_data = two_data[two_data['up_down'] > two_data['up_down'].median()].reset_index(drop=True)
-    two_data.drop(columns=['up_down'], inplace=True)
+    two_data = two_data.rename(columns={'up_down': 'up_down_rev'})
     two_data = two_data.sort_values('buffett', ascending=False).reset_index(drop=True)
     buffett_list = two_data['symbol'].to_list()
 
@@ -275,6 +274,7 @@ def get_one_candidates(check_days=0, target_date=None):
     raise_on_empty_merge(predict_data, predict_dates, two_data['date'].tolist(), 'two/two_predict.csv')
     predict_data['up_down'] = compute_aligned_updown(predict_data)
     predict_data = predict_data.sort_values('buffett', ascending=False).reset_index(drop=True)
+    one_predict_name = os.path.join(os.path.dirname(__file__), 'one_predict.csv')
     print(f'[one] 完成：{len(predict_data)} 行 × {predict_data.shape[1]} 列 -> '
           f'{os.path.relpath(one_predict_name, ROOT)}（{time.time()-t0:.1f}s）', flush=True)
     if VERBOSE: print(predict_data)
@@ -342,6 +342,11 @@ def refresh_buy(target_date=None):
         )
     buy_data = buy_data.sort_values('buffett', ascending=False).reset_index(drop=True)
     buy_data = buy_data.sort_values('up_down', ascending=False).reset_index(drop=True)
+    # 精简列（2026-10-27 用户定案）：关键信息 + 最终决定值 + two 的砍半值 + 各模型决定值。
+    #   symbol/date/endDate/close = 基本信息；buffett/up_down = 最终决定值；
+    #   up_down_rev = two 的营收口径砍半值（revMed7×总资产/市值）；dcf/growth_death/zero/schloss = 其余模型决定值。
+    buy_data = buy_data[['symbol', 'date', 'endDate', 'close', 'buffett', 'up_down',
+                         'up_down_rev', 'dcf', 'growth_death', 'zero', 'schloss']]
     buy_predict_name = os.path.join(os.path.dirname(__file__), '../buy_predict.csv')
     print(f'[one] buy_predict.csv：{len(buy_data)} 行 × {buy_data.shape[1]} 列 -> '
           f'{os.path.relpath(buy_predict_name, ROOT)}', flush=True)

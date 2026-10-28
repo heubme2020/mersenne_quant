@@ -5,7 +5,8 @@ import random
 import numpy as np
 from tqdm import tqdm
 import shutil
-from multiprocessing import Pool, cpu_count
+from multiprocessing import cpu_count
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from zero_features import (
     FEATURE_COLUMNS, LOOKBACK_QUARTERS, PRICE_WINDOW_DAYS, CLIP_VALUE,
@@ -25,13 +26,29 @@ except Exception:
 pd.set_option('future.no_silent_downcasting', True)
 
 
-def process_group(group_tuple, daily_data, train_folder):
+# daily 改成每个 worker 自己读一份，任务参数里只剩 group_tuple。
+# 2026-09-29 改：原来每个任务都塞一整份 daily_data —— Windows 是 spawn，每个任务都要把整张
+# daily 表序列化一遍；three 就是这么在 TSX 上撞内存、让一个 worker 猝死、把整条流水线拖死 4 小时
+# 的（那段说明见 three/gen_train_data.py）。zero 的 daily 更小，但同一个坑不踩第二遍。
+_W = {}
+
+
+def _init_worker(daily_path, train_folder, exchange):
+    """每个 worker 进程启动时读一次 daily（spawn 下父进程的内存不会被子进程继承）。"""
+    _W['daily'] = pd.read_csv(daily_path, encoding='utf-8')
+    _W['train_folder'] = train_folder
+    _W['exchange'] = exchange.upper()
+
+
+def process_group(group_tuple):
     """
     处理单个股票数据组并生成训练文件。
     这是一个独立的函数，适合在多进程中运行。
     """
     symbol = group_tuple[0]
     group = group_tuple[1]
+    daily_data = _W['daily']
+    train_folder = _W['train_folder']
 
     # 1. 数据清洗和准备
     missing_columns = [col for col in FEATURE_COLUMNS if col not in group.columns]
@@ -95,7 +112,7 @@ def process_group(group_tuple, daily_data, train_folder):
                 data[col] = data[col].astype('float32')
 
         # 保存为 HDF5
-        data_basename = f"{symbol}_{endDate}.h5"
+        data_basename = f"{_W['exchange']}_{symbol}_{endDate}.h5"
         data_name = os.path.join(train_folder, data_basename)
         data.to_hdf(data_name, key='data', mode='w')
         files_created += 1
@@ -116,7 +133,6 @@ def gen_exchange_zero_train_data(exchange):
 
     print(f"Loading {exchange} data...")
     try:
-        daily_data = pd.read_csv(daily_path, encoding="utf-8")
         indicator_data = pd.read_csv(indicator_path, encoding="utf-8")
     except FileNotFoundError:
         print(f"Error: Data files not found for {exchange}.")
@@ -130,21 +146,32 @@ def gen_exchange_zero_train_data(exchange):
     train_folder = os.path.join(current_dir, 'train')
     # 使用所有可用 CPU 核心，或根据需要设置一个固定值
     num_processes = cpu_count()
+    # 大所降并发：每个 worker 在 _init_worker 里把整个 daily CSV 读进内存（DataFrame 常驻约
+    # 2× 文件体积、read_csv 峰值约 4×）。32 核 × NASDAQ(935MB→峰值~4GB) ≈ 128GB，会把 64GB
+    # 机器打爆 → worker 在 read_csv 时 OOM 猝死 → BrokenProcessPool → 该所 0 文件。
+    # 把「worker 数 × 峰值」压在 24GB 内；小所照旧用满全部核。
+    daily_mb = os.path.getsize(daily_path) / 1048576
+    per_worker_peak_mb = daily_mb * 4
+    if per_worker_peak_mb > 0:
+        num_processes = max(2, min(num_processes, int(24000 / per_worker_peak_mb)))
     print(f"Starting {num_processes} processes for {len(groups)} groups.")
 
-    # 准备 Pool.starmap 需要的参数列表
-    # (group_tuple, daily_data, train_folder)
-    task_args = [(group_tuple, daily_data, train_folder) for group_tuple in groups]
+    # 任务参数只传 group_tuple —— daily 交给 _init_worker，每个 worker 读一份
+    task_args = list(groups)
 
     # 4. 运行多进程池
     total_files_created = 0
     try:
-        # 使用 Pool.starmap 并行处理所有 groups
-        with Pool(processes=num_processes) as pool:
-            # 进程池会返回一个结果列表，每个结果是 process_group 的返回值 (files_created)
-            results = list(tqdm(pool.starmap(process_group, task_args), total=len(groups), desc=f"Processing {exchange} groups"))
-
-        total_files_created = sum(results)
+        # 用 ProcessPoolExecutor 而不是 Pool：worker 意外死掉（内存不够等）时它会抛
+        # BrokenProcessPool，被下面的 except 接住、记成"这个交易所失败"继续跑下一个所，
+        # 而不是像 Pool 那样永远静默等下去。
+        # 进度条改成 as_completed —— Pool.starmap 返回的是 list，原来那根条是结果全到手
+        # 之后才瞬间刷完的（显示 100% / 00:00 那根全是假象）。
+        with ProcessPoolExecutor(max_workers=num_processes, initializer=_init_worker,
+                                 initargs=(daily_path, train_folder, exchange)) as ex:
+            futs = [ex.submit(process_group, t) for t in task_args]
+            for fut in tqdm(as_completed(futs), total=len(futs), desc=f"Processing {exchange} groups"):
+                total_files_created += fut.result()
         print(f"Finished {exchange}. Total files created: {total_files_created}")
 
     except Exception as e:

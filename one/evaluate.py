@@ -68,7 +68,9 @@ def list_test_files(train_folder, symbols=None):
         if not fn.endswith('.h5'):
             continue
         try:
-            symbol, end_str = fn[:-3].rsplit('_', 1)
+            head, end_str = fn[:-3].rsplit('_', 1)
+            ex, sym = head.split('_', 1) if '_' in head else ('', head)
+            symbol = f'{ex}:{sym}' if ex else sym
             end = int(end_str)
         except (ValueError, IndexError):
             continue

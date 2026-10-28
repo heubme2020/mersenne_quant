@@ -74,9 +74,11 @@ def list_test_files(train_folder, test_start, test_end, symbols=None):
     for fn in os.listdir(train_folder):
         if not fn.endswith('.h5'):
             continue
-        # 文件名形如 {symbol}_{endDate}.h5；symbol 可能含下划线，按最后一个下划线切
+        # 文件名形如 {EX}_{SYM}_{endDate}.h5；按最后一个下划线切日期，头部再按第一个下划线切出 EX:SYM
         try:
-            symbol, end_str = fn[:-3].rsplit('_', 1)
+            head, end_str = fn[:-3].rsplit('_', 1)
+            ex, sym = head.split('_', 1) if '_' in head else ('', head)
+            symbol = f'{ex}:{sym}' if ex else sym
             end = int(end_str)
         except (ValueError, IndexError):
             continue

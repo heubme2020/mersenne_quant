@@ -48,7 +48,7 @@ close 现算，zero/three/seven 的标签来自"只装财务数据"的表，而 
 * **测试股票**（`two/test_symbols.txt` 里的 'EX:SYM'）-> **全局同步网格**：以 `--grid-exchange`
   （默认 SHZ）的交易日历为准，从 2004-01-01 起每 `--key-step`（默认 31）个交易日取一个锚点，
   **所有测试股票在同一天**都有锚点 -> 这才算得出「逐日截面 IC」。
-* **其余股票** -> **每股随机采样**，概率 `--train-rate`（默认 1/31）；种子 = `crc32(symbol)`，
+* **其余股票** -> **每股随机采样**，概率 `--train-rate`（默认 1/127）；种子 = `crc32(symbol)`，
   **不用内置 hash()**（Python 字符串 hash 每进程随机化，结果不可复现）。
 
 ## (symbol, 锚点) 集合与旧线【逐行可比】
@@ -364,7 +364,7 @@ def main():
     ap.add_argument('--aligned-symbols', default=ALIGNED_FILE,
                     help="走全局网格的股票（'EX:SYM'，默认 two/test_symbols.txt = 测试集）")
     ap.add_argument('--key-step', type=int, default=31, help='对齐网格步长（交易日）')
-    ap.add_argument('--train-rate', type=float, default=1.0 / 31.0, help='其余股票的随机采样率')
+    ap.add_argument('--train-rate', type=float, default=1.0 / 127.0, help='其余股票的随机采样率')
     ap.add_argument('--seed', type=int, default=42)
     ap.add_argument('--grid-exchange', default='SHZ', help='全局网格的交易日历基准')
     ap.add_argument('--workers', type=int, default=0)

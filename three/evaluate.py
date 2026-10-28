@@ -5,7 +5,8 @@ three 模型：输入 [127, 31]，输出 growth / death 两个头，各 3 个期
 标签是价格型：
   growth = 未来 N 季度收盘价中位数 / 过去最高价   （上行，越大越好）
   death  = 过去收盘价中位数 / 未来 N 季度最低价   （下行，越大越差）
-排序用的分数 = growth / death（get_three_predict.py 里就是这么用的）。
+排序用的分数 = Π_h growth_h/death_h（逐期限比值相乘，即 gd/combined）。
+get_three_predict.py 里就是按这个口径算 growth_death 的，两边必须保持一致。
 
 典型用法：
   python evaluate.py --model three.pt --test-symbols test_symbols.txt --name run1
@@ -62,7 +63,9 @@ def list_test_files(train_folder, test_start, test_end, symbols=None):
         if not fn.endswith('.h5'):
             continue
         try:
-            symbol, end_str = fn[:-3].rsplit('_', 1)
+            head, end_str = fn[:-3].rsplit('_', 1)
+            ex, sym = head.split('_', 1) if '_' in head else ('', head)
+            symbol = f'{ex}:{sym}' if ex else sym
             end = int(end_str)
         except (ValueError, IndexError):
             continue
@@ -239,10 +242,17 @@ def evaluate_model(model_path, train_folder, test_symbols=None, name='model',
         print("预测结果为空。")
         return None, None
 
-    # 合并分：growth/death 两个头的三个期限求和
+    # 合并分：growth/death 两个头各期限求和；排序分 gd 用【逐期限比值相乘】（Π g_h/d_h），
+    # 与 get_three_predict.py 的 growth_death 同款（两边必须一致）。
     for branch in ['growth', 'death', 'gd']:
-        df[f'pred_{branch}_combined'] = df[[f'pred_{branch}_{h}' for h in HORIZON_NAMES]].sum(axis=1)
-        df[f'real_{branch}_combined'] = df[[f'real_{branch}_{h}' for h in HORIZON_NAMES]].sum(axis=1)
+        pred_cols = [f'pred_{branch}_{h}' for h in HORIZON_NAMES]
+        real_cols = [f'real_{branch}_{h}' for h in HORIZON_NAMES]
+        if branch == 'gd':
+            df['pred_gd_combined'] = df[pred_cols].prod(axis=1)
+            df['real_gd_combined'] = df[real_cols].prod(axis=1)
+        else:
+            df[f'pred_{branch}_combined'] = df[pred_cols].sum(axis=1)
+            df[f'real_{branch}_combined'] = df[real_cols].sum(axis=1)
 
     print(f"\n{'=' * 80}")
     print(f" 样本外评估：{name}")

@@ -34,27 +34,18 @@ TEST_SEED = int(os.environ.get('TEST_SEED', 42))  # 可用环境变量 TEST_SEED
 # loss 方案（命令行参数传入）：mse / smooth_l1 / logcosh / asymmetric / pearson
 LOSS_MODES = ['mse', 'smooth_l1', 'logcosh', 'asymmetric', 'pearson']
 LOSS_MODE = sys.argv[1] if len(sys.argv) > 1 else 'pearson'
-DATA_MODE = sys.argv[2] if len(sys.argv) > 2 else 'ashare'  # ashare / global
+DATA_MODE = sys.argv[2] if len(sys.argv) > 2 else 'global'  # 统一全球；参数保留仅为兼容命令行/产物命名
 FACTOR_MODE = os.environ.get('FACTOR_MODE', 'baseline')     # baseline / plan1 / plan2
 TRAIN_DIR = os.environ.get('TRAIN_DIR', 'train')            # 训练数据目录
-GLOBAL_FOLDER = 'D:/quant_data/train_global'                # 全球数据目录（D 盘）
 RUN_TAG = os.environ.get('RUN_TAG', '')
 MODEL_NAMES = {m: f'one_{DATA_MODE}_{m}_{FACTOR_MODE}{RUN_TAG}.pt' for m in LOSS_MODES}
 EVAL_NAMES = {m: f'{DATA_MODE}_{m}_{FACTOR_MODE}{RUN_TAG}' for m in LOSS_MODES}
 
 
-def is_ashare(symbol):
-    return symbol.endswith('.SS') or symbol.endswith('.SZ')
-
-
-def load_h5_files(train_folder, data_mode):
-    dirs = [train_folder]
-    if data_mode == 'global':
-        dirs.append(GLOBAL_FOLDER)
+def load_h5_files(train_folder):
     files = []
-    for d in dirs:
-        if os.path.isdir(d):
-            files += [os.path.join(d, f) for f in os.listdir(d) if f.endswith('.h5')]
+    if os.path.isdir(train_folder):
+        files += [os.path.join(train_folder, f) for f in os.listdir(train_folder) if f.endswith('.h5')]
     return files
 
 
@@ -69,7 +60,11 @@ def select_device():
 
 
 def symbol_of(f):
-    return os.path.basename(f)[:-3].rsplit('_', 1)[0]
+    """文件名 `{EX}_{SYM}_{date}.h5` -> `EX:SYM`（与 two/parse_name 同）。"""
+    base = os.path.basename(f)[:-3]
+    head, _date = base.rsplit('_', 1)
+    ex, sym = head.split('_', 1) if '_' in head else ('', head)
+    return f'{ex}:{sym}' if ex else sym
 
 
 def compute_raw_labels(data):
@@ -200,15 +195,14 @@ def train_one_model():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     model_name = os.path.join(current_dir, MODEL_NAMES[LOSS_MODE])
     train_folder = os.path.join(current_dir, TRAIN_DIR)
-    h5_files = load_h5_files(train_folder, DATA_MODE)
+    h5_files = load_h5_files(train_folder)
     if not h5_files:
         raise RuntimeError("train 文件夹为空或无 h5 文件")
 
-    # ---- 按股票隔离划分：测试集 = 889 只 A 股（seed 42），val = A 股，train = 其余 A 股 + 全球 ----
+    # ---- 按股票隔离划分：测试集 = 889 只全球股票（seed 42），其余 7:3 拆 train/val ----
     symbols = sorted({symbol_of(f) for f in h5_files})
-    ashare_symbols = [s for s in symbols if is_ashare(s)]
-    if len(ashare_symbols) <= TEST_N:
-        raise ValueError(f"A 股总数 {len(ashare_symbols)} 不足，无法抽出 {TEST_N} 只测试股票")
+    if len(symbols) <= TEST_N:
+        raise ValueError(f"股票总数 {len(symbols)} 不足，无法抽出 {TEST_N} 只测试股票")
 
     # 固定测试集（2026-09-26）：已存在 test_symbols.txt 就直接沿用，不再按股票全集重抽。
     # 动机：数据里加入新股票后，下面那次 seed 洗牌的【输入】就变了 -> 整个测试集都会漂，
@@ -217,8 +211,8 @@ def train_one_model():
     if os.path.exists(_pin):
         with open(_pin) as fp:
             _want = {l.strip() for l in fp if l.strip()}
-        test_symbols = {s for s in ashare_symbols if s in _want}
-        _miss = sorted(_want - set(ashare_symbols))
+        test_symbols = {s for s in symbols if s in _want}
+        _miss = sorted(_want - set(symbols))
         print(f'[固定测试集] 沿用 test_symbols.txt：命中 {len(test_symbols)} / 名单 {len(_want)}',
               flush=True)
         if _miss:
@@ -227,17 +221,17 @@ def train_one_model():
     else:
         # 首次运行：仍是"固定随机"——独立 Random 实例 + 固定种子，不污染全局随机状态
         rng_test = random.Random(TEST_SEED)
-        test_pool = ashare_symbols[:]
+        test_pool = symbols[:]
         rng_test.shuffle(test_pool)
         test_symbols = set(test_pool[:TEST_N])
         print('[首次运行] 无 test_symbols.txt -> 按 TEST_SEED 重抽并落盘', flush=True)
 
-    remaining_ashare = [s for s in ashare_symbols if s not in test_symbols]
+    rest_symbols = [s for s in symbols if s not in test_symbols]
     rng_split = random.Random(int(os.environ.get('VAL_SPLIT_SEED', 12345)))  # 可用环境变量覆盖（每次训练换验证集划分）
-    rng_split.shuffle(remaining_ashare)
-    val_length = int(len(remaining_ashare) * 0.3)
-    val_symbols = set(remaining_ashare[:val_length])
-    train_symbols = set(remaining_ashare[val_length:]) | {s for s in symbols if not is_ashare(s)}
+    rng_split.shuffle(rest_symbols)
+    val_length = int(len(rest_symbols) * 0.3)
+    val_symbols = set(rest_symbols[:val_length])
+    train_symbols = set(rest_symbols[val_length:])
 
     train_files = [f for f in h5_files if symbol_of(f) in train_symbols]
     val_files = [f for f in h5_files if symbol_of(f) in val_symbols]
@@ -246,7 +240,7 @@ def train_one_model():
     test_symbols_path = os.path.join(current_dir, 'test_symbols.txt')
     with open(test_symbols_path, 'w') as fp:
         fp.write('\n'.join(sorted(test_symbols)))
-    print(f"[{DATA_MODE}] 测试A股 {len(test_symbols)}（样本 {len(test_files)}）；"
+    print(f"[{DATA_MODE}] 测试股票 {len(test_symbols)}（样本 {len(test_files)}）；"
           f"训练 {len(train_symbols)} 股 / 验证 {len(val_symbols)} 股；"
           f"训练样本 {len(train_files)} / 验证样本 {len(val_files)}；loss={LOSS_MODE}", flush=True)
 

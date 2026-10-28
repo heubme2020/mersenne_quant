@@ -440,6 +440,7 @@ def main():
         ic, icir, nn = r_d.get(name, (np.nan, np.nan, 0))
         print(f'{name:14s}{ov:>+10.4f}{ic:>+10.4f}{icir:>+10.2f}{nn:>8d}')
     _d_ic = np.array([v[0] for v in r_d.values()], dtype='f8')
+    _d_icir = np.array([v[1] for v in r_d.values()], dtype='f8')
     _o_ic = np.array([v for v in r_ov.values()], dtype='f8')
     print(f'{"平均":14s}{np.nanmean(_o_ic) if np.isfinite(_o_ic).any() else np.nan:>+10.4f}'
           f'{np.nanmean(_d_ic) if np.isfinite(_d_ic).any() else np.nan:>+10.4f}')
@@ -447,6 +448,11 @@ def main():
         print(f'  ⚠️ 没有任何锚点日的样本数 ≥ {a.min_stocks}，逐日截面 IC 算不出来 —— '
               f'上面的逐日列为 NaN。全量数据下测试集是 889 只对齐股票、每个锚点日一整个截面，'
               f'不会这样；小规模试跑可以加 --min-stocks 5 看口径是否正常。')
+    # 机器可读的逐日截面 IC/ICIR（各头均值），供 refresh_models 抓取 —— 与 one/three/seven
+    # evaluate.py 那张表的 IC/ICIR 同口径（逐日截面 IC 均值 / 均值÷标准差）。
+    _d_ic_mean = float(np.nanmean(_d_ic)) if np.isfinite(_d_ic).any() else float('nan')
+    _d_icir_mean = float(np.nanmean(_d_icir)) if np.isfinite(_d_icir).any() else float('nan')
+    print(f'[TEST] 逐日IC={_d_ic_mean:+.4f}  逐日ICIR={_d_icir_mean:+.4f}')
     print(f'\n验证集 mean IC（最好 epoch）= {best:.4f}；产出 {a.out}（{n_par:,} 参数）')
     with open(os.path.splitext(a.out)[0] + '_metrics.json', 'w', encoding='utf-8') as fp:
         json.dump({'n_params': n_par, 'train': len(tr), 'val': len(va), 'test': len(te),

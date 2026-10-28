@@ -1,0 +1,6 @@
+timestamp,model,val_metric,val,ic_metric,ic,icir_metric,icir,log
+2026-10-02 22:31:25,one,val_loss,4.15302,ic_combined,0.137,icir_combined,0.4,retrain_logs\one_20261002_172141.log
+2026-10-02 22:31:25,two,val_ic,0.3339,ic_daily,0.2549,icir_daily,2.5839,retrain_logs\two_20261002_182940.log
+2026-10-02 22:31:25,three,val_loss,0.96405,ic_gd_combined,0.3912,icir_gd_combined,2.163,retrain_logs\three_20261002_194514.log
+2026-10-02 22:31:25,seven,val_loss,1.00119,ic_fcf_combined,0.572,icir_fcf_combined,4.692,retrain_logs\seven_20261002_203836.log
+2026-10-02 22:31:25,zero,val_loss,0.03247,ic_daily,0.4815,icir_daily,4.1383,retrain_logs\zero_20261002_210655.log

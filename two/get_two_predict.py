@@ -18,13 +18,16 @@ pd.set_option('future.no_silent_downcasting', True)
 #     ⚠️ 落盘列名仍是硬编码的 gpMed7/revMed7/taMed7（不取自模型头名）——u9 的真实头名是
 #        gpMedP3F/revMedP3F/taMedP3F。列名只是下游认的标签，但**名不副实**，别拿它当语义。
 #     gpMed7/revMed7/taMed7 = 未来 7 季「毛利/营收/总资产」中位数的前后变化 ÷ 总资产[jc]
-#   * 本阶段行为：把候选池按【毛利头】砍掉后一半。动手的是下游
+#   * 本阶段行为：把候选池按【估值口径】砍掉后一半。动手的是下游
 #     `one/get_one_predict.py` 那行 `up_down > up_down.median()`。
-#   * 曾试过「量纲换算」up_down = 毛利头 × 总资产/市值（= 预测毛利改善额 ÷ 市值），
-#     2026-09-25 用户判定**不行，已回退**。当时的实测留档（干净测试集 44,352 行逐日 IC vs
-#     未来收益，全体样本）：原值 1/3/7 季 −0.001/−0.006/−0.040 → 换算后 +0.014/+0.013/+0.006；
-#     但副作用是排序头部被推向大资产/低市值的银行保险股，且与 buffett（本身已是价值度量）
-#     形成两层价值筛选叠加。**回退后 up_down 恢复为毛利头原值。**
+#     2026-10-27 用户改：up_down = 营收头 × 总资产/市值（= 预测营收改善额 ÷ 市值），
+#     即「估值砍半」。**只改筛选逻辑，模型与三个头都不动**；财务缺失时 up_down 记 NaN，
+#     本文件下方 dropna 会把它丢掉（≈ 不进 one 的池子）。
+#     选营收头（非毛利头）的理由：rev 可预测性高于 gp（逐日 IC ta > rev > gp）、且 rev 不在
+#     buffett 公式里（毛利头已被 ③ 毛利/市值 用掉，用它砍半会两层价值筛选叠加）。
+#   * 历史：2026-09-25 试过【毛利头】× 总资产/市值（实测 IC：原值 1/3/7 季 −0.001/−0.006/−0.040
+#     → 换算后 +0.014/+0.013/+0.006），当时因「排序头部被推向大资产/低市值的银行保险股、
+#     与 buffett 形成两层价值筛选叠加」回退为毛利头原值；2026-10-27 改用【营收头】重新启用。
 #   * 三个头落盘列名 = nowcast 的头名 `gpMed7/revMed7/taMed7`（旧版是
 #     seven/thirty_one/two_hundred_and_twenty_seven，语义已完全不同）。
 #     ⚠️ 这两处列名必须与 `one/get_one_predict.py` 里的 drop 列表一致。
@@ -237,7 +240,9 @@ def get_two_candidates(check_days=0, target_date=None):
         else:
             gp_yield = np.nan
             n_skip_funda += 1
-        up_down = gp          # ← 下游按这列做中位数过滤 = 「按毛利头砍掉后一半」（与估值公式无关）
+        # 砍半口径（2026-10-27 用户改）：估值口径 = 预测营收改善额 ÷ 市值 = revMed7 × 总资产 / 总市值。
+        # 只改筛选逻辑，模型与三个头都不动。财务缺失时记 NaN（下方 dropna 会把这行丢掉）。
+        up_down = rev * ta_val / mcap if (np.isfinite(ta_val) and np.isfinite(mcap) and mcap > 0) else np.nan
         predict_result = {'symbol': symbol, 'date': int(date), 'gpMed7': gp, 'revMed7': rev,
                           'taMed7': ta, 'up_down': up_down, 'gp_yield': gp_yield}
         predict_list.append(predict_result)
@@ -245,7 +250,7 @@ def get_two_candidates(check_days=0, target_date=None):
     predict_data = pd.DataFrame(predict_list)
     predict_dates = predict_data['date'].tolist() if 'date' in predict_data.columns else []
     predict_data = pd.merge(predict_data, buffett_data, on=['symbol', 'date'], how='inner').reset_index(drop=True)
-    # 只对原有列做 dropna（gp_yield 允许缺失，不能因此丢股票）
+    # gp_yield 允许缺失（第三估值块缺了少算一项，不丢股票）；up_down 财务缺失时为 NaN（估值口径没法算），在这里被丢掉。
     predict_data = predict_data.dropna(
         subset=[c for c in predict_data.columns if c != 'gp_yield']).reset_index(drop=True)
     raise_on_empty_merge(predict_data, predict_dates, buffett_data['date'].tolist(), 'schloss/schloss.csv')

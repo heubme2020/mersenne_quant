@@ -8,7 +8,10 @@ import threading
 from tqdm import tqdm
 import shutil
 import datetime
-from multiprocessing import Pool, cpu_count
+from multiprocessing import cpu_count
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+from normalize import normalize_by_mean_std
 
 # Windows 控制台默认 GBK，强制 UTF-8 输出，避免 emoji 乱码/报错
 try:
@@ -19,25 +22,46 @@ except Exception:
 
 pd.set_option('future.no_silent_downcasting', True)
 
-def process_group(group_tuple, mean_data, std_data, train_folder):
+# mean/std 改成每个 worker 自己读一份，任务参数里只剩 group_tuple。
+# 2026-09-29 改：原来每个任务都重复序列化一遍 mean/std（几千个任务就是几千遍）；three 在
+# TSX 上撞内存、一个 worker 猝死、整条流水线静默卡死 4 小时的详细说明见 three/gen_train_data.py。
+# seven 的 mean/std 只有几百 KB，风险比 three 小得多，但同一个坑不踩第二遍。
+_W = {}
+
+
+def _init_worker(mean_path, std_path, train_folder, exchange):
+    """每个 worker 进程启动时读一次 mean/std（spawn 下父进程的内存不会被子进程继承）。"""
+    _W['mean'] = pd.read_csv(mean_path, encoding='utf-8')
+    _W['std'] = pd.read_csv(std_path, encoding='utf-8')
+    _W['train_folder'] = train_folder
+    _W['exchange'] = exchange.upper()
+
+
+def process_group(group_tuple):
     """
     处理单个股票数据组并生成训练文件。
     这是一个独立的函数，适合在多进程中运行。
     """
     symbol = group_tuple[0]
     group = group_tuple[1]
+    mean_data = _W['mean']
+    std_data = _W['std']
+    train_folder = _W['train_folder']
 
     # 1. 数据清洗和准备
-    group = group.fillna(0).reset_index(drop=True)
+    # NaN 财务字段不在这里填 0：留到 normalize 之后、per-sample 的 data.fillna(0) 再填，
+    # 让「缺失 = 中性(0)」与推理端一致。否则缺失会被当成"0 美元"、z-score 成 -mean/std。
+    group = group.reset_index(drop=True)
     group_data_length = len(group)
 
     if group_data_length < 62:
-        return 0 # 返回成功处理的文件数，这里是 0
-    
+        return 0, 0 # 返回 (成功处理的文件数, 因 mean/std 缺失跳过的锚点数)
+
     # 提前转换类型
     group['endDate'] = group['endDate'].astype('int32')
 
     files_created = 0
+    n_skip_norm = 0
 
     # 循环生成训练样本
     for j in range(30, group_data_length-1):
@@ -50,8 +74,8 @@ def process_group(group_tuple, mean_data, std_data, train_folder):
         if len(data_fore) != 31:
             continue
         totalStockholdersEquity = data['totalStockholdersEquity'].iloc[-1]
-        # 检查是不是有点净资产（524287.0 为缺失哨兵值）
-        if totalStockholdersEquity < 524287.0:
+        # 检查是不是有点净资产（524287.0 为缺失哨兵值；NaN 来自三表 outer merge 没对齐）
+        if not np.isfinite(totalStockholdersEquity) or totalStockholdersEquity < 524287.0:
             continue
 
         # 三个预测期限（未来季度数）及其名称，与 seven_model.HORIZONS / HORIZON_NAMES 对应
@@ -82,19 +106,9 @@ def process_group(group_tuple, mean_data, std_data, train_folder):
         # 2. 训练输入 (财务比率) 准备
         
         data.drop(columns=['symbol', 'endDate'], inplace=True)
-        col_names = data.columns.values
-        mean_col_names = mean_data.columns.values
-        for k in range(len(data.columns)):
-            col_name = col_names[k]
-            if col_name not in mean_col_names:
-                continue
-            mean_value = mean_data.loc[mean_data['endDate'] == int(endDate), col_name].item()
-            std_value = std_data.loc[std_data['endDate'] == int(endDate), col_name].item()
-            if std_value != 0:
-                data[col_name] = data[col_name] - mean_value
-                data[col_name] = data[col_name] / std_value
-            else:
-                data[col_name] = 0
+        if normalize_by_mean_std(data, endDate, mean_data, std_data) is None:
+            n_skip_norm += 1
+            continue
         data = data.assign(**labels)
         data = data.fillna(0)
         data.replace([np.inf, -np.inf], 0, inplace=True)
@@ -105,14 +119,14 @@ def process_group(group_tuple, mean_data, std_data, train_folder):
                 data[col] = data[col].astype('float32')
 
         # 保存为 HDF5
-        data_basename = f"{symbol}_{endDate}.h5"
+        data_basename = f"{_W['exchange']}_{symbol}_{endDate}.h5"
         data_name = os.path.join(train_folder, data_basename)
         
         # 使用 'a' 模式写入单个文件更安全，虽然 'w' 也可以
-        data.to_hdf(data_name, key='data', mode='w') 
+        data.to_hdf(data_name, key='data', mode='w')
         files_created += 1
-        
-    return files_created
+
+    return files_created, n_skip_norm
 
 
 def gen_exchange_seven_train_data(exchange):
@@ -144,7 +158,7 @@ def gen_exchange_seven_train_data(exchange):
         financial_data = pd.merge(income_data, balance_data, on=['symbol', 'endDate'], how='outer')
         financial_data = pd.merge(financial_data, cashflow_data, on=['symbol', 'endDate'], how='outer')
         financial_data = financial_data.dropna(subset=['symbol', 'endDate'])
-        financial_data = financial_data.fillna(0).reset_index(drop=True)
+        financial_data = financial_data.reset_index(drop=True)
         financial_data.drop_duplicates(subset=['symbol', 'endDate'], keep='first', inplace=True)
         financial_data = financial_data.reset_index(drop=True)
         # 截取指定特征的部分
@@ -156,7 +170,7 @@ def gen_exchange_seven_train_data(exchange):
             features_data[feature] = financial_data[feature]
         features_data = pd.merge(indicator_data, features_data, on=['symbol', 'endDate'], how='outer')
         features_data = features_data.dropna(subset=['symbol', 'endDate'])
-        features_data = features_data.fillna(0).reset_index(drop=True)
+        features_data = features_data.reset_index(drop=True)
         features_data.drop_duplicates(subset=['symbol', 'endDate'], keep='first', inplace=True)
         features_data = features_data.reset_index(drop=True)
 
@@ -179,20 +193,28 @@ def gen_exchange_seven_train_data(exchange):
     num_processes = cpu_count() 
     print(f"Starting {num_processes} processes for {len(groups)} groups.")
     
-    # 准备 Pool.starmap 需要的参数列表
-    # (group_tuple, daily_data, train_folder)
-    task_args = [(group_tuple, mean_data, std_data, train_folder) for group_tuple in groups]
+    # 任务参数只传 group_tuple —— mean/std 交给 _init_worker，每个 worker 读一份
+    task_args = list(groups)
     
     # 4. 运行多进程池
     total_files_created = 0
+    total_skipped_norm = 0
     try:
-        # 使用 Pool.starmap 并行处理所有 groups
-        with Pool(processes=num_processes) as pool:
-            # 进程池会返回一个结果列表，每个结果是 process_group 的返回值 (files_created)
-            results = list(tqdm(pool.starmap(process_group, task_args), total=len(groups), desc=f"Processing {exchange} groups"))
-        
-        total_files_created = sum(results)
+        # 用 ProcessPoolExecutor 而不是 Pool：worker 意外死掉（内存不够等）时它会抛
+        # BrokenProcessPool，被下面的 except 接住、记成"这个交易所失败"继续跑下一个所，
+        # 而不是像 Pool 那样永远静默等下去。
+        # 进度条改成 as_completed —— Pool.starmap 返回的是 list，原来那根条是结果全到手
+        # 之后才瞬间刷完的（显示 100% / 00:00 那根全是假象）。
+        with ProcessPoolExecutor(max_workers=num_processes, initializer=_init_worker,
+                                 initargs=(mean_path, std_path, train_folder, exchange)) as ex:
+            futs = [ex.submit(process_group, t) for t in task_args]
+            for fut in tqdm(as_completed(futs), total=len(futs), desc=f"Processing {exchange} groups"):
+                n, skipped = fut.result()
+                total_files_created += n
+                total_skipped_norm += skipped
         print(f"Finished {exchange}. Total files created: {total_files_created}")
+        if total_skipped_norm:
+            print(f"  skipped {total_skipped_norm} anchors（mean/std 未覆盖该季度，跳过）")
         
     except Exception as e:
         print(f"An error occurred during multiprocessing for {exchange}: {e}")

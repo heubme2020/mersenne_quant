@@ -121,15 +121,14 @@ VARIANT_RELABEL_ARGS = {
 
 # ---- h5 数据生成（one 需要显式参数；其余四个是写死的配置，无参数）----
 H5_JOBS = [
-    ('one',   [PY, 'one/gen_train_data.py', '--exchanges', 'SHZ', 'SHH',
-               '--folder', 'train', '--rate', str(1.0 / 31.0)]),
+    ('one',   [PY, 'one/gen_train_data.py', '--folder', 'train']),
     ('three', [PY, 'three/gen_train_data.py']),
     ('seven', [PY, 'seven/gen_train_data.py']),
     ('zero',  [PY, 'zero/gen_train_data.py']),
     ('two',   [PY, 'two/gen_train_data.py']),
 ]
 
-# ---- 测试指标的抓取方式（2026-09-27 修）----
+# ---- 测试指标的抓取方式（2026-09-27 修；2026-10-02 起 IC/ICIR 一起抓）----
 # 以前 one/three/seven 用的是 `icir_combined=([0-9.]+)` 这类正则，但**全仓没有任何脚本会打印
 # 那个串** —— `icir_*_combined` 只是 evaluate.py 写进 `eval_results/history.csv` 的**列名**，
 # 控制台里它出现在一张表的一行上：
@@ -140,25 +139,28 @@ H5_JOBS = [
 #     gd/combined    0.2909    2.293     19.18       70      1.7334                    (three)
 #     fcf/combined   0.5862    3.701     31.62       73      8.2143   <- 实际排序用的分数  (seven)
 #
-# 所以正则改成"抓那行的第二列（ICIR）"。⚠️ 不能用 `^` 裸锚定：下面 re.findall 不带 flags，
-# `^` 只会匹配整个字符串的开头 —— 所以模式里自带 `(?m)`。
+# 现在每条 test_re 抓**两个组**：组1 = IC、组2 = ICIR（即上表第 1/2 两个数值列）。
+# ⚠️ 不能用 `^` 裸锚定：下面 re.findall 不带 flags，`^` 只会匹配整个字符串的开头 ——
+# 所以模式里自带 `(?m)`。
 # （three/seven 的分支表里还有 dividend/netasset 的 combined 行，取各自的 gd/fcf 那行才对。）
-TEST_RE_ONE = r'(?m)^combined\s+[+-]?[0-9.]+\s+([+-]?[0-9.]+)'
-TEST_RE_THREE = r'(?m)^gd/combined\s+[+-]?[0-9.]+\s+([+-]?[0-9.]+)'
-TEST_RE_SEVEN = r'(?m)^fcf/combined\s+[+-]?[0-9.]+\s+([+-]?[0-9.]+)'
+# two/zero 不打印这张表，各自在 train.py 里打一行 `[TEST] 逐日IC=.. 逐日ICIR=..`
+#（逐日截面 IC 均值 / 均值÷标准差，与上表的 IC/ICIR 同口径），正则见各模型的 test_re。
+TEST_RE_ONE = r'(?m)^combined\s+([+-]?[0-9.]+)\s+([+-]?[0-9.]+)'
+TEST_RE_THREE = r'(?m)^gd/combined\s+([+-]?[0-9.]+)\s+([+-]?[0-9.]+)'
+TEST_RE_SEVEN = r'(?m)^fcf/combined\s+([+-]?[0-9.]+)\s+([+-]?[0-9.]+)'
 
 # ---- 每个模型的「部署配方」—— 必须和线上推理读的东西一致，改错就等于换了模型 ----
 MODELS = {
     'one': dict(
-        cmd=[PY, 'one/train.py', 'pearson', 'ashare'],      # LOSS_MODE=pearson, DATA_MODE=ashare
+        cmd=[PY, 'one/train.py', 'pearson', 'global'],      # LOSS_MODE=pearson, DATA_MODE=global
         env={'FACTOR_MODE': 'new24'},                        # 线上 one.pt 是 new24
-        # warm start 的种子：one/train.py 找的是 one_ashare_pearson_new24.pt（RUN_TAG 默认 ''），
+        # warm start 的种子：one/train.py 找的是 one_global_pearson_new24.pt（RUN_TAG 默认 ''），
         # 但线上那份叫 one.pt、且该名字的文件并不存在 —— 不先复制，one 就会【从零训】。
-        pre=[('one/one.pt', 'one/one_ashare_pearson_new24.pt')],
+        pre=[('one/one.pt', 'one/one_global_pearson_new24.pt')],
         # 线上推理读的是硬编码的 one/one.pt，而训练产物是 one_{DATA_MODE}_{LOSS}_{FACTOR}.pt
-        deploy=[('one/one_ashare_pearson_new24.pt', 'one/one.pt')],
+        deploy=[('one/one_global_pearson_new24.pt', 'one/one.pt')],
         val_re=r'validate loss:\s*([0-9.]+)', val_better='lower', val_name='val_loss',
-        test_re=TEST_RE_ONE, test_name='icir_combined',
+        test_re=TEST_RE_ONE, test_name='ic_combined', test2_name='icir_combined',
         warm_mark='loaded existing model:',
     ),
     # two 的数据线（2026-09-27 换成自己的 h5）：
@@ -192,28 +194,35 @@ MODELS = {
         deploy=[],
         # 验证 IC 每个 epoch 打一行 -> 取最大值（train.py 存的也是验证最优那个）
         val_re=r'验证 mean IC=([0-9.]+)', val_better='higher', val_name='val_ic',
-        test_re=r'平均\s+([+-][0-9.]+)', test_name='test_ic_avg',
+        test_re=r'\[TEST\]\s*逐日IC=([+-]?[0-9.]+)\s*逐日ICIR=([+-]?[0-9.]+)',
+        test_name='ic_daily', test2_name='icir_daily',
         warm_mark='loaded existing TWO model:',
     ),
     'three': dict(
         cmd=[PY, 'three/train.py'], env={},
         deploy=[],                                           # 产物就是 three/three.pt 本身
         val_re=r'validate loss:\s*([0-9.]+)', val_better='lower', val_name='val_loss',
-        test_re=TEST_RE_THREE, test_name='icir_gd_combined',
+        test_re=TEST_RE_THREE, test_name='ic_gd_combined', test2_name='icir_gd_combined',
         warm_mark='loaded existing THREE model:',
     ),
     'seven': dict(
         cmd=[PY, 'seven/train.py'], env={},
         deploy=[],
         val_re=r'validate loss:\s*([0-9.]+)', val_better='lower', val_name='val_loss',
-        test_re=TEST_RE_SEVEN, test_name='icir_fcf_combined',
+        test_re=TEST_RE_SEVEN, test_name='ic_fcf_combined', test2_name='icir_fcf_combined',
         warm_mark='loaded existing SEVEN model:',
     ),
     'zero': dict(
         cmd=[PY, 'zero/train.py'], env={},
         deploy=[],
-        val_re=r'best_val_loss:\s*([0-9.]+)', val_better='lower', val_name='val_loss',
-        test_re=r'\[TEST\]\s*test_loss=([0-9.]+)', test_name='test_loss',
+        # val 与 one/three/seven 同一口径（validate loss，而不是 best_val_loss —— 后者只在
+        # "有改善才保存"的 epoch 打，从头到尾没改善就抓不到、报 None）。
+        # test 从 MSE loss 改成 Spearman IC；2026-10-02 起再细分到「逐日截面 IC / ICIR」
+        #（zero/train.py 打 `[TEST] 逐日IC=.. 逐日ICIR=..`），与另外四个模型同口径、可横向比
+        #（loss 数值不可横向比；整体 IC 是 pooled、逐日 IC 才是和 one/three/seven 同一把尺）。
+        val_re=r'validate loss:\s*([0-9.]+)', val_better='lower', val_name='val_loss',
+        test_re=r'\[TEST\]\s*逐日IC=([+-]?[0-9.]+)\s*逐日ICIR=([+-]?[0-9.]+)',
+        test_name='ic_daily', test2_name='icir_daily',
         warm_mark='loaded existing ZERO model:',
     ),
 }
@@ -246,6 +255,104 @@ class _Tee:
                 pass
 
 
+# ---- 子进程停滞看门狗 ----------------------------------------------------------
+# 2026-09-29：three 卡在 TSX —— multiprocessing.Pool 有个 worker 内存不足猝死，而 Pool
+# **不会因为 worker 死掉而报错**，只是永远等那个丢掉的返回值；原来的 subprocess.run 也就一直
+# 等下去，整条流水线静默躺了 4 小时 25 分（19:01:31 之后日志再无写入、父进程 CPU 增量恰好
+# 0.00 秒），没人知道。下面这个看门狗把"静默"变成"报错"。
+STALL_MINUTES = 20
+
+
+def _tree_cpu(proc, kids):
+    """整个进程树的累计 CPU 秒数；量不到就返回 None（"判断不了"，**不是** 0）。
+
+    ⚠️ 千万不能把"量不到"当成 0：子进程结束的瞬间 cpu_times() 会抛 NoSuchProcess，若吞掉
+    异常返回 0.0，就会被当成"CPU 没涨"→ 把**一个刚刚正常跑完的步骤**报成"死锁强杀 rc=-9"。
+    自测时真踩到了：一个烧满 90 秒 CPU、自己退出的子进程被报成死锁强杀。
+    """
+    tot = 0.0
+    for q in [proc] + list(kids):
+        try:
+            t = q.cpu_times()
+            tot += t.user + t.system
+        except Exception:
+            return None
+    return tot
+
+
+def _watch(p, log, poll=30):
+    """等子进程 p 结束，顺便盯着它有没有死锁。返回 (退出码, 是否被强杀)。
+
+    判据是"日志不再增长" **且** "进程树 CPU 不再增长"，两个都必须看：
+      · 只看日志会误判 —— Python 的 stdout 写文件是块缓冲的，一个交易所跑很久可能一个字都
+        没落盘；
+      · 只看 CPU 也会误判 —— 真在算的进程 CPU 一直在涨。
+    两个都停 = 死锁。psutil 不在时装不了看门狗，会明说（而不是假装在保护）。
+    """
+    try:
+        import psutil
+    except ImportError:
+        print('  ⚠️ 没有 psutil，装不了停滞看门狗 —— 子进程真卡住时会像以前一样无限等下去',
+              flush=True)
+        return p.wait(), False
+
+    proc = psutil.Process(p.pid)
+    last_size = os.path.getsize(log) if os.path.exists(log) else 0
+    last_cpu = _tree_cpu(proc, [])
+    if last_cpu is None:
+        last_cpu = 0.0
+    # ⚠️ 必须从"现在"起算，不能写 0.0 —— 否则第一个检查点万一没检出增长，静默时长会从
+    #    纪元时间（1970）算起，不管 --stall-minutes 设多大都会当场误杀。
+    last_move = last_report = time.time()
+    while True:
+        # 先看它是不是已经结束了 —— 结束就如实返回它的退出码（别把"刚退出"误判成死锁）
+        rc = p.poll()
+        if rc is not None:
+            return rc, False
+        try:
+            p.wait(timeout=poll)
+        except subprocess.TimeoutExpired:
+            pass
+        rc = p.poll()
+        if rc is not None:
+            return rc, False
+        try:
+            kids = proc.children(recursive=True)
+        except psutil.Error:
+            kids = []
+        size = os.path.getsize(log) if os.path.exists(log) else 0
+        cpu = _tree_cpu(proc, kids)
+        if cpu is None:
+            # 量不到（多半是刚好在这两步之间退出了）—— 判断不了就不杀，重新计时等下一轮
+            last_move, last_report = time.time(), 0.0
+            continue
+        if size != last_size or cpu > last_cpu:
+            last_size, last_cpu, last_move, last_report = size, cpu, time.time(), 0.0
+            continue
+        stuck = (time.time() - last_move) / 60
+        if stuck >= STALL_MINUTES > 0:
+            print(f'  ⚠️ 已经 {stuck:.0f} 分钟没有任何动静（日志没长、CPU 没涨）—— 判定死锁，'
+                  f'强杀整个进程树（{len(kids)} 个子进程）', flush=True)
+            for q in kids:
+                try:
+                    q.kill()
+                except Exception:
+                    pass
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                p.wait(timeout=60)
+            except Exception:
+                pass
+            return -9, True
+        if STALL_MINUTES > 0 and stuck - last_report >= 5:
+            print(f'  … 静默 {stuck:.0f} 分钟（日志和 CPU 都没动；到 {STALL_MINUTES:.0f} 分钟强杀）',
+                  flush=True)
+            last_report = stuck
+
+
 def sh(cmd, log_name, dry=False):
     """跑一个子进程，stdout+stderr 落盘。返回 (退出码, 耗时秒, 日志路径)。"""
     log = os.path.join(LOG_DIR, f'{log_name}_{time.strftime("%Y%m%d_%H%M%S")}.log')
@@ -263,14 +370,15 @@ def sh(cmd, log_name, dry=False):
     env = dict(os.environ)
     env['PYTHONIOENCODING'] = 'utf-8'
     with open(log, 'w', encoding='utf-8', errors='replace') as fp:
-        p = subprocess.run(cmd, cwd=ROOT, env=env, stdout=fp, stderr=subprocess.STDOUT)
+        p = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=fp, stderr=subprocess.STDOUT)
+        rc, killed = _watch(p, log)
     dt = time.time() - t0
-    print(f'  退出码 {p.returncode}  用时 {dt / 60:.1f} 分钟', flush=True)
-    if p.returncode != 0:
+    print(f'  退出码 {rc}{"（死锁强杀）" if killed else ""}  用时 {dt / 60:.1f} 分钟', flush=True)
+    if rc != 0:
         print('  ⚠️ 失败，tail:')
         txt = open(log, encoding='utf-8', errors='replace').read().splitlines()
         print('\n'.join('    ' + l for l in txt[-15:]))
-    return p.returncode, dt, log
+    return rc, dt, log
 
 
 def failed_exchanges(log_path):
@@ -456,6 +564,11 @@ def stage_data(a):
     return True
 
 
+def _fmt(x):
+    """汇总表里把 None 显示成占位符，数值固定 4 位小数。"""
+    return '—' if x is None else f'{x:.4f}'
+
+
 def run_one(name, cfg, dry=False):
     """训练一个模型：warm start 种子 → 跑 train.py → 自检/解析指标 → 部署。返回结果行或 None。"""
     env = dict(os.environ)
@@ -464,6 +577,10 @@ def run_one(name, cfg, dry=False):
     # 都会让它在【干完活之后】崩掉、退出码 1 —— 而这里会把退出码 1 当成"训练失败"，
     # 于是**跳过部署、几小时的训练白跑**。这一行是防这个的。
     env['PYTHONIOENCODING'] = 'utf-8'
+    # 无缓冲输出：训练脚本每步一行 print，靠这个才能让日志持续落盘，训练段看门狗（_watch）才能
+    # 用"日志还在长"判断没卡死。否则块缓冲会让日志一段时间不涨，和 CUDA 训练 CPU 闲置叠加，
+    # 容易被误判成死锁。
+    env['PYTHONUNBUFFERED'] = '1'
     # 训练/验证划分打乱：只影响 val，不影响测试集（各 train.py 的 TEST_SEED 保持默认）
     env['VAL_SPLIT_SEED'] = str(random.randrange(10 ** 9))
     log = os.path.join(LOG_DIR, f'{name}_{time.strftime("%Y%m%d_%H%M%S")}.log')
@@ -476,6 +593,15 @@ def run_one(name, cfg, dry=False):
         for src, dst in cfg['deploy']:
             print(f'  训完复制: {src}  ->  {dst}（部署路径）')
         print('  [dry-run] 不执行'); return None
+    # 训练前备份线上 .pt（覆盖不可逆，万一这次训坏了可以回滚）。
+    # 五个模型的生产权重都叫 {name}/{name}.pt（各推理脚本硬编码读它），统一备份到这里。
+    cur_pt = os.path.join(ROOT, name, f'{name}.pt')
+    if os.path.exists(cur_pt):
+        backup_dir = os.path.join(ROOT, name, 'backup')
+        os.makedirs(backup_dir, exist_ok=True)
+        bak = os.path.join(backup_dir, f'{name}_{time.strftime("%Y%m%d_%H%M%S")}.pt')
+        shutil.copy(cur_pt, bak)
+        print(f'  备份线上权重: {os.path.relpath(cur_pt, ROOT)}  ->  {os.path.relpath(bak, ROOT)}')
     # warm start 种子：把「线上那份 .pt」复制成 train.py 实际会加载的文件名。
     # one 必须走这一步 —— 否则脚本找不到文件、静默从零训（2026-09-26 踩过）。
     for src, dst in cfg.get('pre', []):
@@ -486,11 +612,15 @@ def run_one(name, cfg, dry=False):
         shutil.copy(s, d)
         print(f'  种子: {src}  ->  {dst}', flush=True)
     t0 = time.time()
+    # 训练段也挂停滞看门狗（和数据段同一个 _watch）：训练脚本每步打一行、日志持续增长；
+    # 一旦卡住（DataLoader worker 猝死 / GPU 死锁等）日志不再长 -> 强杀报失败，而不是永久挂起。
+    # 判据是"日志不长 **且** CPU 不长"——日志每步都在长，所以 CUDA 训练 CPU 短暂闲置不会误杀。
     with open(log, 'w', encoding='utf-8', errors='replace') as fp:
-        p = subprocess.run(cfg['cmd'], cwd=ROOT, env=env, stdout=fp, stderr=subprocess.STDOUT)
+        p = subprocess.Popen(cfg['cmd'], cwd=ROOT, env=env, stdout=fp, stderr=subprocess.STDOUT)
+        rc, killed = _watch(p, log)
     txt = open(log, encoding='utf-8', errors='replace').read()
-    print(f'  退出码 {p.returncode}  用时 {(time.time()-t0)/60:.1f} 分钟  日志 {os.path.relpath(log, ROOT)}')
-    if p.returncode != 0:
+    print(f'  退出码 {rc}{"（死锁强杀）" if killed else ""}  用时 {(time.time()-t0)/60:.1f} 分钟  日志 {os.path.relpath(log, ROOT)}')
+    if rc != 0:
         print('  ⚠️ 训练失败，tail:'); print('\n'.join(txt.splitlines()[-12:])); return None
     # warm start 自检：日志里必须出现各 train.py 的加载标记。不加这道校验的话，
     # 「找不到 .pt 于是从零训」是完全静默的 —— 结果照出，但模型换了血统。
@@ -501,9 +631,10 @@ def run_one(name, cfg, dry=False):
     # 解析验证指标（取最优方向上的那个）
     vals = [float(v) for v in re.findall(cfg['val_re'], txt)]
     val = (max if cfg['val_better'] == 'higher' else min)(vals) if vals else None
-    # 解析测试指标
+    # 解析测试指标：test_re 现在抓两个组（组1 = IC，组2 = ICIR）
     tests = re.findall(cfg['test_re'], txt)
-    test = float(tests[-1]) if tests else None
+    test_ic = float(tests[-1][0]) if tests else None
+    test_icir = float(tests[-1][1]) if tests else None
     # 覆盖到部署路径
     for src, dst in cfg['deploy']:
         s = os.path.join(ROOT, src)
@@ -515,11 +646,20 @@ def run_one(name, cfg, dry=False):
     # （one/three/seven 的测试正则错了半年就是这么藏住的）。
     if val is None:
         print(f'  ⚠️ 验证指标没解析出来（{cfg["val_re"]!r} 在日志里没命中）—— 结果行里会是 None')
-    if test is None:
-        print(f'  ⚠️ 测试指标没解析出来（{cfg["test_re"]!r} 在日志里没命中）—— 结果行里会是 None')
-    print(f'  验证 {cfg["val_name"]} = {val}    测试 {cfg["test_name"]} = {test}')
+    if test_ic is None or test_icir is None:
+        print(f'  ⚠️ IC/ICIR 没解析出来（{cfg["test_re"]!r} 在日志里没命中）—— 结果行里会是 None')
+    print(f'  验证 {cfg["val_name"]} = {val}    IC = {test_ic}    ICIR = {test_icir}')
+    # 训练 + 部署完成：删掉该模型的训练样本腾空间（2026-10-27 用户定：训完一个删一个，
+    # 否则 5 个模型的全球 h5 同时占盘几百 GB；two 最贵 ≈280GB，训完立刻删最划算）。
+    # 只在「训练成功走到这里」时才删：前面 rc!=0 会提前 return None，失败的模型保留 train/ 便于排查。
+    train_dir = os.path.join(ROOT, name, 'train')
+    if os.path.isdir(train_dir):
+        shutil.rmtree(train_dir, ignore_errors=True)
+        print(f'  已删除训练样本: {os.path.relpath(train_dir, ROOT)}（腾空间）')
     return dict(model=name, val_name=cfg['val_name'], val=val,
-                test_name=cfg['test_name'], test=test, log=os.path.relpath(log, ROOT))
+                ic_name=cfg['test_name'], ic=test_ic,
+                icir_name=cfg['test2_name'], icir=test_icir,
+                log=os.path.relpath(log, ROOT))
 
 
 def stage_train(a):
@@ -535,18 +675,29 @@ def stage_train(a):
         else:
             failed.append(n)
     if rows:
+        header = 'timestamp,model,val_metric,val,ic_metric,ic,icir_metric,icir,log\n'
+        # 迁移旧 7 列格式（test_metric/test）→ 新 9 列格式（ic/icir）：列数对不上会把
+        # retrain_results.csv 静默写成错位，所以检测到旧表头就先把旧文件挪走、另起新文件。
+        if os.path.exists(RESULTS):
+            with open(RESULTS, encoding='utf-8') as fp:
+                _old = fp.readline()
+            if _old.strip() != header.strip():
+                _bak = RESULTS + '.old'
+                os.replace(RESULTS, _bak)
+                print(f'  （检测到旧格式的 retrain_results.csv，已另存为 {os.path.basename(_bak)}）')
         new = not os.path.exists(RESULTS)
         with open(RESULTS, 'a', encoding='utf-8') as fp:
             if new:
-                fp.write('timestamp,model,val_metric,val,test_metric,test,log\n')
+                fp.write(header)
             ts = time.strftime('%Y-%m-%d %H:%M:%S')
             for r in rows:
                 fp.write(f'{ts},{r["model"]},{r["val_name"]},{r["val"]},'
-                         f'{r["test_name"]},{r["test"]},{r["log"]}\n')
+                         f'{r["ic_name"]},{r["ic"]},{r["icir_name"]},{r["icir"]},{r["log"]}\n')
         print(f'\n{"="*100}\n  汇总（已追加到 {os.path.relpath(RESULTS, ROOT)}）\n{"="*100}')
-        print(f'  {"模型":8s}{"验证指标":>16s}{"验证":>12s}{"测试指标":>18s}{"测试":>12s}')
+        print(f'  {"模型":8s}{"验证指标":>16s}{"验证":>12s}{"IC":>10s}{"ICIR":>10s}')
         for r in rows:
-            print(f'  {r["model"]:8s}{r["val_name"]:>16s}{r["val"]:>12}{r["test_name"]:>18s}{r["test"]:>12}')
+            print(f'  {r["model"]:8s}{r["val_name"]:>16s}{r["val"]:>12}'
+                  f'{_fmt(r["ic"]):>10}{_fmt(r["icir"]):>10}')
     if a.dry_run:
         return True
     # 退出码/返回值：单个模型失败不影响其余四个（上面逐个跑、逐个部署），
@@ -562,7 +713,7 @@ def stage_train(a):
 def main():
     # global 必须在任何引用之前（否则 default=NOWCAST_VARIANTS 会触发
     # SyntaxError: name used prior to global declaration）
-    global NOWCAST_VARIANTS, NOWCAST_ROOT
+    global NOWCAST_VARIANTS, NOWCAST_ROOT, STALL_MINUTES
     ap = argparse.ArgumentParser(
         description='一键重训 5 个模型：数据（MySQL→CSV→h5）→ 训练（warm start）→ 部署 → 记指标')
     ap.add_argument('--stage', choices=['export', 'data', 'train', 'all'], default='all',
@@ -587,9 +738,13 @@ def main():
     ap.add_argument('--data-only', nargs='+', default=None,
                     help='只重生这些模型的 h5，例如 `--data-only zero`（其余步骤照常跳过）。'
                          '配合 --stage data --skip-export 就能一个模型一个模型地跑。')
+    ap.add_argument('--stall-minutes', type=float, default=STALL_MINUTES,
+                    help=f'子进程日志和 CPU 都停滞这么多分钟就判定死锁、强杀并报失败'
+                         f'（默认 {STALL_MINUTES}）。设 0 关闭看门狗。')
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args()
     NOWCAST_VARIANTS, NOWCAST_ROOT = a.variants, a.nowcast_root
+    STALL_MINUTES = a.stall_minutes
 
     os.makedirs(LOG_DIR, exist_ok=True)
     # 本脚本自己的输出也落盘（见 _Tee 的说明）

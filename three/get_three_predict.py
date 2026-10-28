@@ -148,6 +148,7 @@ import time
 import sys
 import torch
 from three_model import THREE  # noqa: F401  确保 torch.load 整模型时类可反序列化
+from normalize import normalize_by_mean_std
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根（本脚本在 <root>/<model>/）
 VERBOSE = '--verbose' in sys.argv    # 默认只打摘要行；加 --verbose 才打整张表（旧行为）
@@ -221,6 +222,7 @@ def get_exchange_growth_death(exchange):
     
     # predict结果
     predict_list = []
+    n_skip_norm = 0
     groups = list(features_data.groupby('symbol'))
     print(f"[three] {exchange} 预测：{len(groups)} 只股票", flush=True)
     
@@ -248,27 +250,10 @@ def get_exchange_growth_death(exchange):
         for col in group.select_dtypes(include=['float64']).columns:
             group[col] = group[col].astype('float32')
             
-        col_names = group.columns.values
-        mean_col_names = mean_data.columns.values
-        
-        for k in range(len(col_names)):
-            col_name = col_names[k]
-            if col_name not in mean_col_names:
-                continue
-                
-            # 【修改点 3】升级为安全取值逻辑，防止新日期均值单元格为空导致 .item() 异常崩溃
-            mean_series = mean_data.loc[mean_data['endDate'] == int(endDate), col_name]
-            std_series = std_data.loc[std_data['endDate'] == int(endDate), col_name]
-            
-            mean_value = mean_series.item() if not mean_series.empty and pd.notna(mean_series.item()) else 0.0
-            std_value = std_series.item() if not std_series.empty and pd.notna(std_series.item()) else 1.0
-            
-            if std_value != 0:
-                group[col_name] = group[col_name] - mean_value
-                group[col_name] = group[col_name] / std_value
-            else:
-                group[col_name] = 0
-                
+        # 归一化：mean/std 未覆盖最新季度时跳过这只股票（宁可少预测，也不喂未归一化的原始值）
+        if normalize_by_mean_std(group, endDate, mean_data, std_data) is None:
+            n_skip_norm += 1
+            continue
         data = group.fillna(0)
         data.replace([np.inf, -np.inf], 0, inplace=True)
         data[(data > 8191.0)] = 8191.0
@@ -286,20 +271,25 @@ def get_exchange_growth_death(exchange):
         
         with torch.no_grad():
             growth, death = model(symbol_data)
-        growth = growth.cpu().detach().numpy()[0][0]
-        growth = np.mean(growth)
-        death = death.cpu().detach().numpy()[0][0]
-        death = np.mean(death)
-        
-        predict_result = {'symbol': symbol, 'endDate': int(endDate), 'growth': growth, 'death': death}
+        g = growth.cpu().detach().numpy()[0][0]      # [3] 三个期限
+        d = death.cpu().detach().numpy()[0][0]       # [3]
+        # 排序分 = Π_h growth_h/death_h（逐期限比值相乘）—— 与 evaluate.py 的 gd/combined
+        # （refresh_models 抓取并写进 history.csv 的那个指标）同款。以前这里是 mean(growth)/mean(death)，
+        # 和评估口径是两套公式，导致"重训时判断模型好坏"衡量的并不是生产里真正用来排名的分数。
+        # 除零保护与 evaluate.py 的 gd 口径同：|death|≤1e-6 时取 +1e-6。
+        d_safe = np.where(np.abs(d) > 1e-6, d, 1e-6)
+        gd = float(np.prod(g / d_safe))
+        # growth/death 两列仍存各期限均值（仅供落盘参考，下游 zero 只用 growth_death 一列）
+        predict_result = {'symbol': symbol, 'endDate': int(endDate),
+                          'growth': float(np.mean(g)), 'death': float(np.mean(d)),
+                          'growth_death': gd}
         predict_list.append(predict_result)
         
     predict_data = pd.DataFrame(predict_list)
-    
-    # 【安全防御】避免分母 death 出现 0 导致报错或产生 inf 
-    predict_data['growth_death'] = predict_data['growth'] / predict_data['death'].replace(0, np.nan)
-    predict_data['growth_death'] = predict_data['growth_death'].fillna(0)
-    
+
+    # growth_death 已在上面的循环里按 Π_h growth_h/death_h 算好（与 evaluate.py 的 gd/combined 同口径），
+    # 这里不再用 mean(growth)/mean(death) 重算。
+
     # 【逻辑对齐】之前代码里直接 drop(columns=['endDate']) 会导致最后合并丢失预测截止日期
     # 在此保留，合并完 seven_data 之后再行选择处理，确保新旧日期在最终的合并中对齐
     predict_data = pd.merge(predict_data, seven_data, on=['symbol'], how='inner')
@@ -314,6 +304,8 @@ def get_exchange_growth_death(exchange):
     predict_data = predict_data.reset_index(drop=True)
     
     _out = data_name + "/grow_death_predict.csv"
+    if n_skip_norm:
+        print(f"[three] {exchange} 跳过 {n_skip_norm} 只（mean/std 未覆盖最新季度，无法归一化）", flush=True)
     print(f"[three] {exchange} 完成：{len(predict_data)} 行 × {predict_data.shape[1]} 列 -> {os.path.relpath(_out, ROOT)}（{time.time()-t0:.1f}s）", flush=True)
     if VERBOSE: print(predict_data)
     predict_data.to_csv(data_name + '/grow_death_predict.csv', index=False)

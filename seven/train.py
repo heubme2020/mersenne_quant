@@ -220,7 +220,10 @@ def train_seven_model():
     # 其余股票再按 7:3 隔离成 train/val。
     # 文件名形如 {symbol}_{endDate}.h5，symbol 可能含下划线，故按最后一个下划线切。
     def _symbol_of(f):
-        return os.path.basename(f)[:-3].rsplit('_', 1)[0]
+        base = os.path.basename(f)[:-3]
+        head, _date = base.rsplit('_', 1)
+        ex, sym = head.split('_', 1) if '_' in head else ('', head)
+        return f'{ex}:{sym}' if ex else sym
 
     TEST_N = 127 * 7  # 测试集股票数（127×7，扩大测试样本以降低 IC 噪声）
     TEST_SEED = int(os.environ.get('TEST_SEED', 42))  # 可用环境变量 TEST_SEED 覆盖（每次训练换测试集）
