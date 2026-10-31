@@ -1,10 +1,4 @@
-"""`two` 自己的特征构造 —— 从 `two/nowcast/gen_data2.py` **逐字抽取**，让 two 不再依赖 nowcast。
-
-## 为什么要有这个文件（2026-09-26）
-
-`two/get_two_predict.py` 原先写的是 `from gen_data2 import build_x, ...` ——
-也就是**生产推理依赖 `nowcast/` 目录**。而 nowcast 是实验目录、用户要清理冗余，一删，
-每日选票就全断。抽出来之后 `two/` 自给自足。
+"""`two` 自己的特征构造 —— 从旧实验线的 `build_x` **逐字抽取**，让 two 自给自足。
 
 ## 为什么是"逐字复制"而不是重写
 
@@ -13,10 +7,10 @@
 > 31 维的列集合与列序、归一化基准、idx 分母三者任何一处漂移都会**静默出错**。
 
 这类"看起来一样但不一样"的漂移不会报错，只会让模型输入悄悄变形、日更选票慢慢走偏。
-所以本文件是逐字搬运，并且有 `_verify_vs_nowcast.py` 用**真实日线窗口**做**逐位相等**校验
-（不是肉眼比对、不是近似相等）。**改这里的任何一行，都要重跑那个校验。**
+所以本文件是逐字搬运，并用**真实日线窗口**做过**逐位相等**校验（不是肉眼比对、不是近似相等）。
+**改这里的任何一行，都要重跑那个校验。**
 
-## 依赖（都在 one/ 下，没有一个在 nowcast/ 里）
+## 依赖（都在 one/ 下）
 
     one/factor_config.py    get_technical_factors('new24')
     one/gen_train_data.py   add_technical_factor
@@ -29,7 +23,7 @@
    裸导入就会命中 **two 自己那份**，而不是 `one/gen_train_data.py`。所以这里用
    **显式路径导入**，从根上免疫命名冲突。
 2. **不要和 two/ 的旧实现混** —— `get_two_predict_legacy.py` 用的是 CURRENT_24 因子集、
-   idx 分母误用 380。本文件与 **nowcast 训练端一致**：raw 块序
+   idx 分母误用 380。本文件与训练端一致：raw 块序
    `open,high,low,close,volume,delta`、技术因子 NEW_24、idx 分母 `DAYS_INPUT-1 = 888`。
 """
 import importlib.util
@@ -85,7 +79,7 @@ def available_date(end_dates):
 def build_x(w):
     """日线窗口 w（WINDOW 行）-> 模型输入 X (WINDOW, 31)，float32。
 
-    （逐字复制自 `two/nowcast/gen_data2.py`；改动必须重跑 `_verify_vs_nowcast.py`。）
+    （逐字复制自旧实验线的 `build_x`；改动必须重跑逐位校验。）
 
     训练与推理必须共用这一段：31 维的列集合与列序、归一化基准、idx 分母三者任何一处
     漂移都会静默出错。按【名字】选取 f[COLS]，所以 w 的物理列序无所谓。

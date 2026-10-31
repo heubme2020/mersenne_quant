@@ -2,7 +2,7 @@
 
 ## 本文件是三个脚本合并而成（2026-09-28）
 
-    full_retrain.py    数据编排：MySQL 导出 CSV → 重生各模型 h5 →（可选）nowcast 分块
+    full_retrain.py    数据编排：MySQL 导出 CSV → 重生各模型 h5
     retrain_all.py     训练编排：五个模型续训 / 部署 / 解析验证与测试指标
     refresh_model.py   ← 更早的"数据+训练一把梭"（**注意是单数的旧名**，2026-09 已失效：
                        模块级裸导入直接 ImportError、缺 two、训练在同进程里跑）。
@@ -14,24 +14,11 @@
 
     data   ① MySQL -> data/{EX}/*.csv                       (get_stock_data.get_data)
            ② 重生 h5：one / three / seven / zero / two       (各自的 gen_train_data.py)
-           ③ 重生 nowcast 分块（**可选**，只在 `--nowcast` 时跑；实验用）
     train  训练 5 个模型（warm start + 部署 + 指标追加到 retrain_results.csv）
     all    先 data 再 train
 
 ⚠️ two 的 h5 全量重生是**全链最贵的一步：≈5~6 小时**（24 个所实测 4.4 小时 / 1,697,296 个
 文件 / 234GB），比另外四个加起来还长 —— 所以它排在 H5_JOBS 最后，前面四个先训好、先能部署。
-
-## 两处刻意的工程决定（都不要随手改）
-
-1. **nowcast 数据生成到【新根目录】**（默认 `nowcast4`），不覆盖旧的 `nowcast3`
-   （现在只在 `--nowcast` 下才会走到这一步）。
-   原因：`chunk_*_X.npy` 是所有变体**共用**的输入，而 `chunk_*_y{u1..u8}.npy` 是各变体
-   独立的标签。只重生 X + u9、把 u1..u8 留在原地，会让那些**旧标签和新 X 行序错位**
-   （同一 chunk 里的行已经不是同一批锚点了）—— 将来谁再跑 u6 会静默拿到错数据。
-   生成到新根目录就完全没这个问题，而且旧 88GB 原样保留、随时可回退。
-
-2. **只生成 u9**（`--variants u9`）。生产上 `two` 用的是 u9；其余 u1~u8 是已放弃的实验。
-   要多个变体就传 `--variants u1 u6 u9`。
 
 ## 导出前的安全检查
 
@@ -55,9 +42,6 @@
     --skip-export                    跳过 MySQL->CSV（导出已单独跑过时用）
     --data-only zero                 只重生指定模型的 h5（配 --stage data --skip-export）
     --only one two                   只训指定模型
-    --nowcast                        额外重生 nowcast 分块（默认跳过；做变体实验才用）
-    --variants u1 u6 u9              要生成哪些 nowcast 变体（默认只有 u9，需配 --nowcast）
-    --nowcast-root <path>            改 nowcast 分块输出根目录（需配 --nowcast）
 
 ## 跑之前的状态前提
 
@@ -98,26 +82,6 @@ PY = sys.executable
 LOG_DIR = os.path.join(ROOT, 'retrain_logs')
 DATA_DIR = os.path.join(ROOT, 'data')
 RESULTS = os.path.join(ROOT, 'retrain_results.csv')
-
-# nowcast 分块生成到新根目录（见模块 docstring 第 1 条）
-NOWCAST_ROOT = 'C:/quant_data/nowcast4'
-NOWCAST_VARIANTS = ['u9']
-NOWCAST_ALIGNED = os.path.join(ROOT, 'two', 'nowcast', 'test_symbols_all31_889.txt')
-
-# gen_data2 用的**基础变体**：它顺手写的那份 y 只是占位（真标签由 relabel 覆写）。
-# 必须是 `labels.build_labels` 认得的 form 的变体（u1 属于 yoy_delta/growth 那一类）。
-# ⚠️ 千万别改成 u9 —— 见 stage_data 里那段说明，会直接崩。
-BASE_VARIANT = 'u1'
-
-# 每个目标变体的 relabel 参数。依据 `two/nowcast/variants.py` 各变体段自己的注释：
-#   u6/u7/u9 前向窗口都是 7 季；u9 的【过去窗口】是 3 季（其余变体默认 = 前向窗口）；
-#   u8 用 yoymed（同比变化的中位数，无量纲）。别名要加就在这里加。
-VARIANT_RELABEL_ARGS = {
-    'u6': ['--suffix', 'u6', '--horizons', '7'],
-    'u7': ['--suffix', 'u7', '--horizons', '7'],
-    'u8': ['--suffix', 'u8', '--horizons', '7', '--form', 'yoymed'],
-    'u9': ['--suffix', 'u9', '--horizons', '7', '--past-win', '3'],
-}
 
 # ---- h5 数据生成（one 需要显式参数；其余四个是写死的配置，无参数）----
 H5_JOBS = [
@@ -163,31 +127,10 @@ MODELS = {
         test_re=TEST_RE_ONE, test_name='ic_combined', test2_name='icir_combined',
         warm_mark='loaded existing model:',
     ),
-    # two 的数据线（2026-09-27 换成自己的 h5）：
-    #   以前 two 走的是「nowcast 分块 + two/nowcast/train.py」两步线（数据在 C:/quant_data/nowcast3|4，
-    #   产物 nowcast_both_u9.pt 再复制成 two/two.pt）。现在 `two/gen_train_data.py` 一步
-    #   生成 `two/train/*.h5`（特征与标签都是逐字移植、行集与旧线逐行可比），
-    #   `two/train.py` 直接读它、直接写 two/two.pt —— 与另外四个模型的形状一致，
-    #   所以 `deploy` 是空的（产物就是部署路径本身）。
-    #   变体仍是 **u9**（不是 u6）：定案依据见 two/nowcast/paired_u6_u9.py 与
-    #   `two/nowcast/variants.py` 的 u9 段 —— 按「排序选股」的终点指标看，u9 至少不差于 u6。
-    # warm start：`two/train.py` 从 two/two.pt 接着训（日志里打 'loaded existing TWO model:'）。
-    #
-    # ---- 回退面包屑：旧的那条 two 线（2026-09-27 之前用的，要回退就把下面这行换回去）----
-    # 前提是先用 `--nowcast`（或手动跑 two/nowcast/gen_data2.py + add_u6_labels.py）
-    # 把分块生成到 --nowcast-root 指的目录：
-    #   cmd=[PY, 'two/nowcast/train.py', '--arm', 'both', '--suffix', 'u9', '--labels', 'level',
-    #        '--test-mode', 'global_random', '--test-n', '889', '--test-seed', '42',
-    #        '--seed', '1', '--epochs', '7', '--root', 'C:/quant_data/nowcast3', '--tag', '_u9',
-    #        '--warm-start'],
-    #   deploy=[('two/nowcast/nowcast_both_u9.pt', 'two/two.pt')],
-    #   warm_mark='warm start: 载入',
-    # 旧数据都还在盘上（C:/quant_data/nowcast3 及其 u9 标签），换成这条不会找不到东西。
-    # ⚠️ 2026-09-28：`two/nowcast/nowcast_both_u9.pt` 已随 nowcast 整理移进 _trash
-    #    —— 但它与 git 提交里的 `two/two.pt` **逐字节相同**（sha256 ff6c0d9e…，4,163,478 B），
-    #    所以要回退时把上面那行的 deploy 换成：
-    #       deploy=[('two/two.pt', 'two/two.pt')]   # 就是它自己（先 git checkout 回到交付版）
-    #    或直接从 `_trash_20260928/nowcast/nowcast_both_u9.pt` 移回来。
+    # two 的数据线（2026-09-27 换成自己的 h5）：`two/gen_train_data.py` 一步生成 `two/train/*.h5`，
+    # `two/train.py` 直接读它、直接写 two/two.pt —— 与另外四个模型的形状一致，所以 `deploy`
+    # 是空的（产物就是部署路径本身）。变体是 u9（meddiff 三头）；warm start 从 two/two.pt 续训
+    # （日志里打 'loaded existing TWO model:'）。
     'two': dict(
         cmd=[PY, 'two/train.py', '--epochs', '7'],
         env={},                                              # 不给 --val-seed -> 验证划分每次随机
@@ -514,60 +457,6 @@ def stage_data(a):
         for name, cmd in jobs:
             if not gen_h5(name, cmd, a.dry_run):
                 return False
-
-    if a.data_only is not None:
-        print('\n  （--data-only：只重生上面那些 h5，**跳过 nowcast 分块**。'
-              '要单独跑它用 `--stage data --skip-export --skip-h5 --nowcast`）', flush=True)
-        return True
-    # 阶段 3 从 2026-09-27 起是**可选**的：two 以前靠 nowcast 分块（gen_data2 + relabel），
-    # 现在靠自己的 h5（已经并进上面的 H5_JOBS），所以这一阶段默认不跑 —— 它每次要花 1~2 小时，
-    # 而产出的分块只有做 nowcast 变体实验时才用得上。要跑加 `--nowcast`。
-    # 跳过时照样打一条完整横幅（而不是一句括号说明）：看日志的人一眼就知道"阶段 3 是被有意
-    # 跳过的"，不会以为脚本缺了一段。
-    if not a.nowcast:
-        print(f'\n{"="*100}\n  阶段 3/3：重生 nowcast 分块 —— 已跳过（默认）\n{"="*100}', flush=True)
-        print('  two 现在读自己的 two/train/*.h5（阶段 2 生成），不再读 nowcast 分块；')
-        print('  这一步的产物在生产链上没有任何消费者，所以默认不跑（每次省 1~2 小时）。')
-        print('  要做 nowcast 变体实验（u1~u8）加 `--nowcast`；旧分块仍在 '
-              'C:/quant_data/nowcast3（6030 个 .npy，含 603 个 u9 标签），一个都没删。', flush=True)
-        return True
-
-    print(f'\n{"="*100}\n  阶段 3/3：重生 nowcast 分块（--nowcast，实验用）-> {NOWCAST_ROOT}\n{"="*100}',
-          flush=True)
-    exs = sorted(d for d in os.listdir(DATA_DIR)
-                 if os.path.isdir(os.path.join(DATA_DIR, d)))
-    print(f'  交易所 {len(exs)} 个；目标变体 {NOWCAST_VARIANTS}', flush=True)
-
-    # ⚠️ u9/u6/u8 的标签【不是】gen_data2 能直接生成的。它们的 form 是 'med' / 'yoymed'，
-    #    而 `two/nowcast/labels.py::build_labels` 只认 level_flow / level_flow_eq / growth /
-    #    level_stock / yoy_delta / growth_signed —— 遇到别的直接 `raise ValueError(form)`。
-    #    所以 `gen_data2.py --variant u9` 会**一跑就崩**（2026-09-27 读代码确认）。
-    #    正确流程是【两步】（nowcast3 里的 u6/u8/u9 也是这么来的）：
-    #      ① gen_data2 用基础变体生成 X（X 与变体无关，只需一次）+ 一份占位 y
-    #      ② add_u6_labels.relabel 覆写 `_y{suffix}` / `_b{suffix}` / `_r{suffix}`
-    #    训练端按 `--suffix u9` 读的就是 ② 写出来的那份。
-    print(f'\n───── [①] gen_data2 生成 X（只做一次；基础变体 {BASE_VARIANT} 的 y 是占位）', flush=True)
-    rc, _, _ = sh([PY, 'two/nowcast/gen_data2.py', '--exchanges', *exs,
-                   '--out', NOWCAST_ROOT, '--variant', BASE_VARIANT,
-                   '--aligned-symbols', NOWCAST_ALIGNED],
-                  'gendata_nowcast_X', dry=a.dry_run)
-    if rc != 0:
-        print('  ⚠️ X 生成失败。')
-        return False
-
-    for v in NOWCAST_VARIANTS:
-        print(f'\n───── [②] relabel -> {v}', flush=True)
-        extra = VARIANT_RELABEL_ARGS.get(v)
-        if extra is None:
-            print(f'  ⚠️ 不知道变体 {v!r} 该怎么 relabel —— 跳过。'
-                  f'（已知：{sorted(VARIANT_RELABEL_ARGS)}；要加别名见 add_u6_labels.py 的 --past-win/--form）')
-            continue
-        rc, _, _ = sh([PY, 'two/nowcast/add_u6_labels.py', '--exchanges', *exs,
-                       '--root', NOWCAST_ROOT, *extra],
-                      f'relabel_nowcast_{v}', dry=a.dry_run)
-        if rc != 0:
-            print(f'  ⚠️ {v} 的 relabel 失败。')
-            return False
     return True
 
 
@@ -755,26 +644,15 @@ def stage_all(a):
 
 
 def main():
-    # global 必须在任何引用之前（否则 default=NOWCAST_VARIANTS 会触发
-    # SyntaxError: name used prior to global declaration）
-    global NOWCAST_VARIANTS, NOWCAST_ROOT, STALL_MINUTES
+    global STALL_MINUTES
     ap = argparse.ArgumentParser(
         description='一键重训 5 个模型：数据（MySQL→CSV→h5）→ 训练（warm start）→ 部署 → 记指标')
     ap.add_argument('--stage', choices=['export', 'data', 'train', 'all'], default='all',
                     help='export=只做 MySQL->CSV（含"有没有导出没"的检查）；'
                          'data=export + 重生全部数据；train=只训练；all=全套（默认）')
-    ap.add_argument('--nowcast', action='store_true',
-                    help='额外重生 nowcast 分块（默认跳过 —— two 现在用自己的 h5，'
-                         '这一阶段只有做 nowcast 变体实验时才需要，每次要 1~2 小时）')
-    ap.add_argument('--variants', nargs='+', default=NOWCAST_VARIANTS,
-                    help=f'要生成的 nowcast 变体（默认 {NOWCAST_VARIANTS}；只在 --nowcast 下生效）')
-    ap.add_argument('--nowcast-root', default=NOWCAST_ROOT,
-                    help='nowcast 分块输出根目录（只在 --nowcast 下生效，见模块 docstring）')
-    ap.add_argument('--skip-nowcast', action='store_true',
-                    help='【已无必要，只为兼容旧命令行】不跑 nowcast 分块 —— 现在这是默认行为')
     ap.add_argument('--skip-h5', action='store_true',
                     help='跳过 h5 重生（one/three/seven/zero/two）。配合 --stage data --skip-export '
-                         '就等于"只生成 nowcast 分块"（需再加 --nowcast），便于一步一步单独跑。')
+                         '就等于只做 MySQL->CSV。')
     ap.add_argument('--skip-export', action='store_true',
                     help='跳过 MySQL->CSV，直接用现有 data/ 重生（导出已单独跑过时用）')
     ap.add_argument('--only', nargs='+', choices=list(MODELS), default=None,
@@ -787,7 +665,6 @@ def main():
                          f'（默认 {STALL_MINUTES}）。设 0 关闭看门狗。')
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args()
-    NOWCAST_VARIANTS, NOWCAST_ROOT = a.variants, a.nowcast_root
     STALL_MINUTES = a.stall_minutes
 
     os.makedirs(LOG_DIR, exist_ok=True)

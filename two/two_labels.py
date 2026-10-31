@@ -1,23 +1,16 @@
-"""`two` 的标签层：u9（meddiff）标签 + 采样用的 `ok` 门。**不依赖 nowcast/**。
+"""`two` 的标签层：u9（meddiff）标签 + 采样用的 `ok` 门。
 
-## provenance（全是逐字移植；改任何一行都要重跑逐位验证）
+本文件从旧的**两步实验线**逐字移植（那条线已删除）。改任何一行都要重跑逐位验证。
 
-* 面板与 meddiff 标签  ← `two/nowcast/add_u6_labels.py`
-    - 常量 `FIELDS` / `TAG`                    ：第 30~32 行
-    - `load_panel(..., form='meddiff')`        ：第 35~87 行（含两个 rolling 窗口）
-    - `relabel()` 里「jc → row → (fwd−past)/TA[jc]」那段：第 121~151 行
-    - 头名 = `TAG[字段] + 期限`（与 `labels.flat_names` 的「字段优先」展平一致）：第 106~107 行
-* `ok` 门（u1 的 yoy_delta）← `two/nowcast/labels.py`
-    - 行集与 `load_panel`                      ：第 70~82 行
-    - `_clean`                                 ：第 88~91 行
-    - `build_labels` 的 `yoy_delta` 分支       ：第 136~146 行
-    - `gen_data2.get_labels` 用它当 `labok`    ：`two/nowcast/gen_data2.py` 第 69~86 行
-* `available_date` ← `two_features`（与 `nowcast/gen_data2.available_date` 同一套规则）
+* 面板与 meddiff 标签：`FIELDS`/`TAG` 常量、`load_panel`（含两个 rolling 窗口）、
+  标签公式「jc → row → (fwd−past)/TA[jc]」、头名 = `TAG[字段] + 期限`（字段优先展平）。
+* `ok` 门（u1 的 yoy_delta）：行集、`_clean`、`build_labels` 的 yoy_delta 分支。
+* `available_date` ← `two_features`（同一套披露日规则）。
 
 ## 为什么连 `ok` 也要搬过来（这是本文件最容易被误解的地方）
 
-nowcast 那条线里，样本的 **(symbol, 锚点) 集合**不是 u9 决定的，而是 `gen_data2.py` 用
-**u1 变体的 `ok`** 筛出来的（`get_labels` → `lab_sym['ok']` → `labok[k]`，ok=False 的锚点整段跳过）；
+旧两步线里，样本的 **(symbol, 锚点) 集合**不是 u9 决定的，而是 `gen_data2` 用 **u1 变体的
+`ok`** 筛出来的（`get_labels` → `lab_sym['ok']` → `labok[k]`，ok=False 的锚点整段跳过）；
 u9 的标签只是 `add_u6_labels.relabel()` **事后覆写** y/b/r 而已。所以：
 
     旧线行集 = gen_data2(u1).ok 门 ∩ (relabel 写出的 u9 标签有限)     ← 后者由 Store 的 labok 再筛一次
@@ -28,8 +21,7 @@ u1.ok=False 的锚点，新数据与旧数据不可比、也无法做逐位验�
 ## ⚠️ 两个口径**故意不同**，不要"统一"它们
 
 * `jc`（u9 标签的基准季度）= 锚点日前最后一个**【已结束】**的季度（用 `endDate`，不看披露）。
-  它的报告在锚点日可能尚未披露（A 股 Q2 → 8/31）→ **u9 标签本身含前视**，见
-  `two/nowcast/variants.py` 的 u9 段。这是标签的定义，照搬。
+  它的报告在锚点日可能尚未披露（A 股 Q2 → 8/31）→ **u9 标签本身含前视**。这是标签的定义，照搬。
 * `ok` 门用的季度 = 最后一个**【已披露】**的季度（用 `available_date`）→ 无前视。
 
 两者用不同的季度索引是有意的（前者是 `relabel` 的 `searchsorted(endDate)`，后者是
@@ -46,18 +38,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, '..'))
 DATA = os.path.join(ROOT, 'data')
 
-# ---- u9 的参数（见 two/nowcast/variants.py 的 u9 段：前向 7 季、过去 3 季）----
+# ---- u9 的参数（前向 7 季、过去 3 季）----
+# 三个标签头 = 毛利 / 营收 / 总资产 的「前后中位数变化 ÷ 总资产[jc]」。
 FIELDS = ['grossProfit', 'revenue', 'totalAssets']
 TAG = {'grossProfit': 'gpMed', 'revenue': 'revMed', 'totalAssets': 'taMed'}
 HORIZONS = [7]
 PAST_WIN = 3
-# 头名（展平顺序 = 字段优先）。u9 的名字把两个窗口都编码进去了：
-# 过去 P3 季 / 前向 F7 季 -> 'gpMedP3F'，与 two/nowcast/variants.py 的 u9 键名一字不差。
+# 头名（展平顺序 = 字段优先）：过去 P3 季 / 前向 F7 季 -> 'gpMedP3F' 等。
 assert HORIZONS == [7] and PAST_WIN == 3, '头名硬编码了 u9 的 P3F，改窗口长度必须同步改这里'
 HEAD_NAMES = [f'{TAG[c]}P{PAST_WIN}F' for c in FIELDS]
 N_HEADS = len(HEAD_NAMES)
 
-# ---- u1 的 ok 门（two/nowcast/labels.py 的模块级常量）----
+# ---- u1 的 ok 门 ----
 OK_HORIZONS = [1, 3, 7]      # labels.py:HORIZONS —— 与 variant 无关，恒为 1/3/7
 BACK = 3                     # labels.py:BACK（j-3 与 j+1 是同一个日历季）
 CLIP = 127.0                 # labels.py:CLIP（与 three/seven 的标签口径一致）
@@ -128,7 +120,7 @@ def label_matrices(panel):
     """面板 -> (Y, B) 两个 (n_rows, 3) float32 —— 逐字等价于对每行跑 relabel() 的标签循环。
 
     Y[:, fi*nh + hi] = clamp((fwd_{c}_{h} − past_{c}_{pw}) / totalAssets[jc], ±127)
-    B 与 nowcast 一致**恒为 0**（relabel 写的是 `np.zeros_like(Y)`）：
+    B 与旧线一致**恒为 0**（relabel 写的是 `np.zeros_like(Y)`）：
     meddiff 标签本身已经是"变化量"，它的朴素基准（"上一轮重演"）就是 0。
     """
     n = len(panel)
@@ -162,7 +154,7 @@ def pack(panel):
 
 
 def label_frame(y):
-    """一个样本的标签 -> 1 行 3 列 DataFrame（列名与 two/nowcast/variants.py 的 u9 段一致）。
+    """一个样本的标签 -> 1 行 3 列 DataFrame（列名 = HEAD_NAMES）。
 
     **只写三个头**（2026-09-27 起）。以前还会写 `b_gpMedP3F/b_revMedP3F/b_taMedP3F` 和 `ok`
     两列，但这两个都是**常量列**，写进 h5 一点信息都没有：

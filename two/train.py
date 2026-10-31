@@ -1,18 +1,18 @@
-"""two 训练器：读 `two/train/*.h5` -> 训 3 头 Nowcast -> 写 `two/two.pt`。
+"""two 训练器：读 `two/train/*.h5` -> 训 3 头 TwoNet -> 写 `two/two.pt`。
 
     cd two
     python train.py            # 默认：two/train/*.h5 -> two/two.pt
 
-## 配方与 nowcast 一致（逐条对应 `two/nowcast/train.py` 的 both 臂 + `--suffix u9 --loss smooth_l1`）
+## 配方（u9 = meddiff 三头，损失 smooth_l1）
 
 * 输入 = h5 的 `key='data'` 前 889 行（1017×31 里的输入段）；辅助头目标 = 后 128 行 × 列 [3,4,5]
   （= close/volume/delta，与 one 的 FORE_COLS 同）。
-* 损失 = `mse(aux)` + `smooth_l1(pred, y, beta=1.0) * N_HEADS`（two/nowcast/train.py:414-422）。
-* 标签按**训练集**做稳健标准化：`y = (Y − median) / (IQR/1.349 + 1e-6)`，再裁到 ±8
-  （two/nowcast/train.py:297-299、408-409）。aux 同理（中位数 + IQR/1.349）。
-* Adam lr=1e-3、**7 个 epoch**、batch 64、每 epoch 随机打乱整份训练集（= nowcast 的 `perm` 切块）。
+* 损失 = `mse(aux)` + `smooth_l1(pred, y, beta=1.0) * N_HEADS`。
+* 标签按**训练集**做稳健标准化：`y = (Y − median) / (IQR/1.349 + 1e-6)`，再裁到 ±8。
+  aux 同理（中位数 + IQR/1.349）。
+* Adam lr=1e-3、**7 个 epoch**、batch 64、每 epoch 随机打乱整份训练集。
   （7 是五个模型共用的口径：one/three/seven 的 train.py 写死 7，zero 2026-09-27 从 31 改成 7。）
-* EMA 关闭（`--ema 0` 是 nowcast 的默认）。
+* EMA 关闭（`--ema 0`）。
 * 验证口径 = 整体 Spearman IC（`eval_ic_overall`）的均值，取最好的那个 epoch 存盘。
 * **终端输出与另外四个模型同口径**：进度打
   `Epoch: %d, train loss: ... mean loss: ... min val loss: ...`（**每步一行、不带 step 号**，
@@ -21,24 +21,24 @@
   训练/验证共用）。但**存盘仍按验证 mean IC 选** —— 排名模型该看 IC，loss 只是"优化到哪了"
   的体温计。所以紧跟着多打一行 two 特有的 `验证 mean IC=... 逐头 [...]`，那才是决定存哪一版的数。
 * 存盘前把「反标准化 affine」焼进模型 buffer（`one_model.set_output_scale`）——`two/get_two_predict.py`
-  按「模型直接输出真实单位」写的，漏了就会静默错一个量级（nowcast 的毛利/市值曾因此被放大 76 倍）。
+  按「模型直接输出真实单位」写的，漏了就会静默错一个量级（毛利/市值曾因此被放大 76 倍）。
 * **warm start**（2026-09-27 补）：`--out` 已存在就从它接着训，与 one/three/seven/zero 的 train.py
   一致（`--no-warm-start` 关掉）。载入后**必须把 affine 还原成恒等**，理由见下面那段 ⚠️。
 
-## 划分（与 one / nowcast 一致：**测试股票固定**）
+## 划分（**测试股票固定**）
 
 * 测试集 = `two/test_symbols.txt`（'EX:SYM'，= gen_train_data 走全局同步网格的那 889 只）。
   沿用而不是重抽的理由见 `one/train.py` 里那段注释：数据里加入新股票后，重抽会让整个测试集漂移，
   新旧指标不可比。**这份名单同时是生成端"对齐采样"的名单**，所以测试股票在同一天都有锚点
   -> 才算得出逐日截面 IC。
-* 验证集 = 其余股票里 30%（seed 12345，与 one/nowcast 同）；训练集 = 剩下的 70%。
+* 验证集 = 其余股票里 30%（seed 12345，与 one 同）；训练集 = 剩下的 70%。
 
-## 与 nowcast 的两个必然差异（不是配方差异，是数据格式差异）
+## 与旧线的两个必然差异（不是配方差异，是数据格式差异）
 
-1. h5 是**每样本一个文件**（nowcast 是 memmap 分块），所以按文件读；`--val-max` 默认只抽
-   2 万行算验证 IC（nowcast 用全部验证行）——纯粹为了让 7 个 epoch 跑得完，IC 口径没变。
+1. h5 是**每样本一个文件**（旧线是 memmap 分块），所以按文件读；`--val-max` 默认只抽
+   2 万行算验证 IC（旧线用全部验证行）——纯粹为了让 7 个 epoch 跑得完，IC 口径没变。
 2. 标签在**另一个 key** 里（`key='label'`，1 行 3 列）。生成端已经把 u9 窗口不完整
-   （标签为 NaN）的锚点整段丢掉（等价于旧线里 `two/nowcast/data.py` 的 Store 对 y/b/r 的有限性过滤），
+   （标签为 NaN）的锚点整段丢掉（等价于旧线里 `data.py` 的 Store 对 y/b/r 的有限性过滤），
    所以落盘的行标签一定有限；启动时抽检 200 个 h5 确认一次列名与有限性。
    2026-09-27 起 `key='label'` 里的 `ok`（恒 True）和 `b_*`（恒 0）两列常量不再写盘，见
    `two_labels.label_frame`。**旧格式（7 列）的文件不用重生成**：取 `[HEAD_NAMES]` 拿到的
@@ -68,15 +68,15 @@ except Exception:
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, '..'))
 
-# 模型定义在 two 自己那份（逐字复制自 two/nowcast/model.py；one_model 用显式路径导入）
-from two_nowcast_model import (Nowcast, HEAD_NAMES, N_HEADS, AUX_OUTPUT_DAYS,   # noqa: E402
-                               set_output_scale)
+# 模型定义在 two 自己那份（逐字复制自旧实验线；one_model 用显式路径导入）
+from two_net import (TwoNet, HEAD_NAMES, N_HEADS, AUX_OUTPUT_DAYS,   # noqa: E402
+                     set_output_scale)
 from two_features import COLS, DAYS_INPUT                                       # noqa: E402
 
 AUX = AUX_OUTPUT_DAYS            # 128
-Z_CLIP = 8.0                     # two/nowcast/train.py:Z_CLIP
+Z_CLIP = 8.0                     # 标签裁到 ±8 的上界
 VAL_FRAC = 0.30
-VAL_SEED = 12345                 # 与 one / nowcast 同
+VAL_SEED = 12345                 # 与 one 同
 AUX_COLS = [3, 4, 5]             # COLS = [open,high,low,close,volume,delta] + ... -> close/volume/delta
 
 
@@ -138,7 +138,7 @@ class H5Dataset(Dataset):
 
 
 def estimate_stats(samples, n_max, rng):
-    """训练集的稳健标准化统计：median + IQR/1.349（two/nowcast/train.py:297-312 同式）。"""
+    """训练集的稳健标准化统计：median + IQR/1.349。"""
     idx = np.sort(rng.choice(len(samples), min(n_max, len(samples)), replace=False))
     Ys, aux = [], []
     for i in idx:
@@ -165,7 +165,7 @@ def rank_ic(a, b):
 
 
 def eval_ic_overall(pred, y):
-    """整体 IC（把全部行放一起算 Spearman）—— nowcast 的验证主口径。"""
+    """整体 IC（把全部行放一起算 Spearman）—— 验证主口径。"""
     res = {}
     for k, name in enumerate(HEAD_NAMES):
         a, b = pred[:, k], y[:, k]
@@ -194,7 +194,7 @@ def eval_icir(pred, y, dates, min_stocks=20):
 
 
 def batch_loss(aux_p, pred, aux_t, y):
-    """训练/验证共用的损失（= two/nowcast/train.py:414-422 的 `mse(aux) + N_HEADS·smooth_l1`）。
+    """训练/验证共用的损失（`mse(aux) + N_HEADS·smooth_l1`）。
 
     只在这里定义一次：训练循环和验证循环各写一遍的话，改了一处忘了另一处，
     那句打出来的 "validate loss" 就悄悄不再是训练目标那个 loss 了。
@@ -236,7 +236,7 @@ def main():
     ap.add_argument('--lr', type=float, default=1e-3)
     ap.add_argument('--batch', type=int, default=64)
     ap.add_argument('--seed', type=int, default=0)
-    # 验证集划分种子：默认 12345（与 one/nowcast 同，保证手工跑可复现），但**允许环境变量覆盖**
+    # 验证集划分种子：默认 12345（与 one 同，保证手工跑可复现），但**允许环境变量覆盖**
     # —— `refresh_models.py` 每次重训会注入随机的 VAL_SPLIT_SEED，让验证划分每轮不同
     # （否则报出来的"验证 mean IC"会长期盯着同一个划分、越比越乐观）。
     # one/train.py:226 是同一个写法；three/seven/zero 本来就用系统熵，不需要这个。
@@ -245,7 +245,7 @@ def main():
     ap.add_argument('--val-max', type=int, default=20000,
                     help='验证 IC 用多少行（0=全部）。h5 逐文件读，全量验证太慢')
     ap.add_argument('--min-stocks', type=int, default=20,
-                    help='逐日截面 IC 只统计当天样本数 ≥ 这个值的锚点日（nowcast 的 eval_icir 同）')
+                    help='逐日截面 IC 只统计当天样本数 ≥ 这个值的锚点日')
     ap.add_argument('--workers', type=int, default=0)
     ap.add_argument('--limit-train', type=int, default=0, help='只用前 N 个训练样本（调试用）')
     ap.add_argument('--no-warm-start', action='store_false', dest='warm_start', default=True,
@@ -362,9 +362,9 @@ def main():
                            batch_size=a.batch, shuffle=False, num_workers=workers,
                            persistent_workers=workers > 0)
 
-    model = Nowcast([len(COLS), DAYS_INPUT]).to(device)     # 3 头（u9），与现有 two.pt 同构
+    model = TwoNet([len(COLS), DAYS_INPUT]).to(device)      # 3 头（u9），与现有 two.pt 同构
     n_par = sum(p.numel() for p in model.parameters())
-    print(f'  模型 Nowcast({N_HEADS} 头) 参数 {n_par:,}；每 epoch {len(tr) // a.batch:,} 步；'
+    print(f'  模型 TwoNet({N_HEADS} 头) 参数 {n_par:,}；每 epoch {len(tr) // a.batch:,} 步；'
           f'设备 {device}', flush=True)
 
     # ---- warm start（2026-09-27 补：以前 two/train.py 是每次从零训，而用户定的规格是
@@ -417,7 +417,7 @@ def main():
               f'({time.time() - t0:.0f}s)', flush=True)
         if score > best:
             best = score
-            # 顺序必须是「装上 affine -> 存 -> 还原恒等」（two/nowcast/train.py:46-58 同）：
+            # 顺序必须是「装上 affine -> 存 -> 还原恒等」：
             # 装上存下来 -> .pt 直接输出真实单位（get_two_predict.py 就按这个写的）
             # 存完还原   -> 后面的训练/验证仍在 z 空间
             set_output_scale(model, y_mean, y_std)

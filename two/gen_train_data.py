@@ -1,15 +1,15 @@
-"""two 的训练数据：**一步**生成 h5（特征 X + u9 标签），不依赖 nowcast/。
+"""two 的训练数据：**一步**生成 h5（特征 X + u9 标签）。
 
     cd two
     python gen_train_data.py        # 默认：31 个交易所 -> two/train/*.h5
 
 ## 这个脚本是原来【两步】的合并
 
-原线（nowcast）：
+原线（旧两步线，现已删除）：
 
-    ① two/nowcast/gen_data2.py      从 data/{EX}/*.csv 造 X（889 天日线窗口 -> 1017×31）+
-                                基础标签，写 chunk_*.npy 分块；**同时决定 (symbol, 锚点) 集合**
-    ② two/nowcast/add_u6_labels.py  的 relabel() 事后**覆写** y/b/r，换成 u9 的 meddiff 标签
+    ① gen_data2.py      从 data/{EX}/*.csv 造 X（889 天日线窗口 -> 1017×31）+
+                        基础标签，写 chunk_*.npy 分块；**同时决定 (symbol, 锚点) 集合**
+    ② add_u6_labels.py  的 relabel() 事后**覆写** y/b/r，换成 u9 的 meddiff 标签
 
 现在一次做完，落盘从「分块 npy」改成「每样本一个 h5」，与 one/three/seven/zero 对齐。
 
@@ -18,7 +18,7 @@
     key='data'   (1017, 31) float32 DataFrame，列名 = `two_features.build_x` 的 COLS
                  （与 one/train/*.h5 一样，`pd.read_hdf(path, key='data')` 直接可用）
     key='label'  (1, 3) DataFrame：gpMedP3F / revMedP3F / taMedP3F
-                 （三个头的 u9 标签，列名同 variants.py 的 u9 段）
+                 （三个头的 u9 标签，列名同 two_labels.HEAD_NAMES）
 
 `key='label'` 是 two **唯一**比另外四个模型多的东西，而且是必须的：one 的标签能从 1017 行里的
 close 现算，zero/three/seven 的标签来自"只装财务数据"的表，而 two 的 u9 标签要用**财报面板**
@@ -43,7 +43,7 @@ close 现算，zero/three/seven 的标签来自"只装财务数据"的表，而 
 
 `key='data'` 的**内部格式**与 one 逐字相同（列名/列序/形状/dtype），这一条不受命名影响。
 
-## 采样（`sym_samples` 逐字照搬 nowcast/gen_data2.sym_samples）
+## 采样（`sym_samples` 逐字照搬旧线 gen_data2.sym_samples）
 
 * **测试股票**（`two/test_symbols.txt` 里的 'EX:SYM'）-> **全局同步网格**：以 `--grid-exchange`
   （默认 SHZ）的交易日历为准，从 2004-01-01 起每 `--key-step`（默认 31）个交易日取一个锚点，
@@ -57,7 +57,7 @@ close 现算，zero/three/seven 的标签来自"只装财务数据"的表，而 
 
     1. `ok` 门：锚点日前最后一个【已披露】季度上，u1（yoy_delta）的标签必须有限
        —— 旧线里是 `gen_data2.get_labels` 的 labok，ok=False 的锚点整段跳过
-    2. 标签门：u9 标签必须有限 —— 旧线里是 `two/nowcast/data.py` 的 Store 对 y/b/r 的有限性过滤
+    2. 标签门：u9 标签必须有限 —— 旧线里是 `data.py` 的 Store 对 y/b/r 的有限性过滤
 
 两个门都在**生成端**执行，所以落盘的都是训练真正会用的行：
 
@@ -69,7 +69,7 @@ close 现算，zero/three/seven 的标签来自"只装财务数据"的表，而 
 
 ## ⚠️ 四个坑（照做，别"优化"掉）
 
-1. **不要从 nowcast 导入任何东西**。`two/` 在 `sys.path` 最前，裸 `from gen_train_data import ...`
+1. **不要裸导入 one/ 下的同名模块**。`two/` 在 `sys.path` 最前，裸 `from gen_train_data import ...`
    会命中 two 自己这份；one/ 下的模块一律走 `two_features` 的**显式路径导入**。
 2. **Windows 控制台默认 GBK**：print 里放 emoji/非 GBK 字符会让脚本在**干完所有活之后**崩、
    退出码 1（2026-09-26 `zero/gen_train_data.py` 就这么"失败"过）。开头 reconfigure + 不放 emoji。
@@ -157,8 +157,6 @@ from two_features import build_x, COLS, RAW, WINDOW, DAYS_INPUT, AUX_DAYS, REF_I
 import two_labels as L                                                             # noqa: E402
 
 ALIGNED_FILE = os.path.join(HERE, 'test_symbols.txt')
-# 兜底名单（只在 two/test_symbols.txt 缺失时用一次，随即落盘到 two/，之后不再依赖 nowcast）
-NOWCAST_ALIGNED = os.path.join(ROOT, 'two', 'nowcast', 'test_symbols_all31_889.txt')
 
 _panel_cache = {}
 CHUNK_ROWS = 500_000        # 日线分块读的行数（≈30MB/块，见 load_daily）
@@ -169,7 +167,7 @@ def daily_path(exchange):
 
 
 def daily_cols():
-    """列集与 nowcast/gen_data2.load_daily 一致：symbol/date + RAW 前 5 个（delta 是算出来的）。"""
+    """列集与旧线 gen_data2.load_daily 一致：symbol/date + RAW 前 5 个（delta 是算出来的）。"""
     return ['symbol', 'date'] + RAW[:5]
 
 
@@ -189,7 +187,7 @@ def symbol_list(exchange):
 
 
 def load_daily(exchange, symbols=None):
-    """该交易所的日线（列集 / 2000 年过滤 / 排序与 nowcast/gen_data2.load_daily 一致）。
+    """该交易所的日线（列集 / 2000 年过滤 / 排序与旧线 gen_data2.load_daily 一致）。
 
     `symbols=None` 读全表；给了集合就**只留这些股票**，且分块读。
 
@@ -254,7 +252,7 @@ def panel_of(exchange):
 def sym_samples(sym, daily, packed, aligned, grid=None, rate=None, seed=0):
     """该股票的样本 -> [(anchor_date, X, y, b, ok), ...]。
 
-    采样部分（网格/随机、两个门）逐字复制自 `nowcast/gen_data2.sym_samples`；
+    采样部分（网格/随机、两个门）逐字复制自旧线 `gen_data2.sym_samples`；
     唯一改动是「拿到 X 和标签之后就地返回」，而不是塞进分块数组。
     """
     dates = daily['date'].values
@@ -337,17 +335,10 @@ def chunk_worker(task):
 
 
 def load_aligned(path):
-    """读对齐名单（'EX:SYM' 全键）。缺失时用 nowcast 的名单兜底并落到 path（只此一次）。"""
+    """读对齐名单（'EX:SYM' 全键，默认 two/test_symbols.txt = 测试集）。"""
     if not os.path.exists(path):
-        if os.path.exists(NOWCAST_ALIGNED):
-            print(f'[对齐名单] {os.path.relpath(path, ROOT)} 不存在 -> 从 '
-                  f'{os.path.relpath(NOWCAST_ALIGNED, ROOT)} 取一次并落盘（之后 two/ 自足）',
-                  flush=True)
-            shutil.copyfile(NOWCAST_ALIGNED, path)
-        else:
-            raise SystemExit(f'错误：对齐名单 {path} 不存在，且兜底名单 '
-                             f'{NOWCAST_ALIGNED} 也不存在。\n'
-                             f'（测试股票必须走全局同步网格，缺它就算不出逐日截面 IC）')
+        raise SystemExit(f'错误：对齐名单 {path} 不存在。\n'
+                         f'（测试股票必须走全局同步网格，缺它就算不出逐日截面 IC）')
     out = set()
     for line in open(path, encoding='utf-8'):
         s = line.strip()

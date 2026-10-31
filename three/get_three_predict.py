@@ -155,6 +155,10 @@ VERBOSE = '--verbose' in sys.argv    # 默认只打摘要行；加 --verbose 才
 
 pd.set_option('future.no_silent_downcasting', True)
 
+# 市场 -> 交易所列表 / 产物文件后缀：美股 + A 股两套独立管线，不混横截面
+MARKET_EXCHANGES = {'CN': ['SHZ', 'SHH'], 'US': ['AMEX', 'NASDAQ', 'NYSE']}
+MARKET_SUFFIX = {'CN': '', 'US': '_us'}
+
 
 def select_device():
     """选择设备：优先 CUDA，但会实际跑一个 matmul 验证 kernel 可用，否则退回 CPU。
@@ -171,7 +175,7 @@ def select_device():
     return torch.device('cpu')
 
 
-def get_exchange_growth_death(exchange):
+def get_exchange_growth_death(exchange, market='CN'):
     t0 = time.time()
     # 检查GPU是否可用
     device = select_device()
@@ -190,7 +194,7 @@ def get_exchange_growth_death(exchange):
     std_data = pd.read_csv(data_name + '/std_' + exchange + '.csv')
     indicator_data = pd.read_csv(data_name + '/indicator_' + exchange + '.csv')
     features_data = pd.read_csv(data_name + '/../../three/features_importance.csv')
-    seven_data = pd.read_csv(data_name + '/../../seven/seven_predict.csv')
+    seven_data = pd.read_csv(data_name + f'/../../seven/seven_predict{MARKET_SUFFIX[market]}.csv')
 
     # 合并财务相关数据
     financial_data = pd.merge(income_data, balance_data, on=['symbol', 'endDate'], how='outer')
@@ -216,7 +220,7 @@ def get_exchange_growth_death(exchange):
     features_data.drop_duplicates(subset=['symbol', 'endDate'], keep='first', inplace=True)
     features_data = features_data.reset_index(drop=True)
     
-    # 截取seven股票里大于median值的股票列表
+    # 截取seven股票里大于median值的股票列表（本文件已按市场拆分，直接取本市场中位数）
     seven_data = seven_data[seven_data['dcf'] > seven_data['dcf'].median()].reset_index(drop=True)
     seven_list = seven_data['symbol'].to_list()
     
@@ -234,10 +238,10 @@ def get_exchange_growth_death(exchange):
         symbol = groups[i][0]
         if symbol not in seven_list:
             continue
-        digit0 = int(symbol[0])
-        if digit0 not in [0, 3, 6]:
+        # A 股代码首位限定 0/3/6（剔 B 股等）；美股是字母代码，不做此过滤
+        if exchange in ('shz', 'shh') and int(str(symbol)[0]) not in [0, 3, 6]:
             continue
-            
+
         group = group[-31:].reset_index(drop=True)
         group.drop(columns='symbol', inplace=True)
         endDate = group['endDate'].iloc[-1]
@@ -311,17 +315,17 @@ def get_exchange_growth_death(exchange):
     predict_data.to_csv(data_name + '/grow_death_predict.csv', index=False)
 
 
-def refresh_growth_death():
+def refresh_growth_death(market='CN'):
     t0 = time.time()          # 总计时（下面的 per-exchange t0 是局部变量，互不影响）
-    get_exchange_growth_death('SHZ')
-    get_exchange_growth_death('SHH')
+    exchanges = MARKET_EXCHANGES[market]
+    for ex in exchanges:
+        get_exchange_growth_death(ex, market)
     data_name = os.path.join(os.path.dirname(__file__), '../data/')
-    predict_data_shenzhen = pd.read_csv(data_name + 'SHZ/grow_death_predict.csv', engine='pyarrow')
-    predict_data_shanghai = pd.read_csv(data_name + 'SHH/grow_death_predict.csv', engine='pyarrow')
+    frames = [pd.read_csv(data_name + f'{ex}/grow_death_predict.csv', engine='pyarrow') for ex in exchanges]
 
-    predict_data = pd.concat([predict_data_shenzhen, predict_data_shanghai], axis=0)
+    predict_data = pd.concat(frames, axis=0)
     predict_values = predict_data.sort_values(by='growth_death', ascending=False).reset_index(drop=True)
-    three_predict_name = os.path.join(os.path.dirname(__file__), 'three_predict.csv')
+    three_predict_name = os.path.join(os.path.dirname(__file__), f'three_predict{MARKET_SUFFIX[market]}.csv')
     print(f"[three] 汇总：{len(predict_values)} 行 -> {os.path.relpath(three_predict_name, ROOT)}"
           f"（{time.time()-t0:.1f}s）", flush=True)
     if VERBOSE: print(predict_values)

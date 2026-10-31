@@ -23,7 +23,7 @@
   （旧架构推理的回退路径在用）。
 * **实验记录**（这次整理的重点）：
   * `估值方法与指标总结.md`：估值公式与指标的完整清单，含**哪些没 work 及原因**；
-  * `two/nowcast/`：nowcast 实验线 —— 标签变体（u1~u9）的全部结论，其中包括
+  * 日线模型预测财务变化的实验记录（标签变体 u1~u9 的全部结论），其中包括
     **"日线模型预测财务变化在收益端全线失败、模型实质是动量代理"**这个关键负面结果；
   * `one/factor_screen/` + `one/实验结果_5win.md`：现役因子集 `new24` 的筛选存档；
   * 各模块的实验记录（`three损失函数优化实验.md`、`indicator特征删减*.md`、`zero/*.md` 等）；
@@ -53,7 +53,6 @@
 见 [README「已知问题与未完成」](README.md#十已知问题与未完成)，摘要：
 
 * `one` 的 warm start 未把 affine 还原成恒等（训练起点量级错位）；
-* `two/nowcast/` 两个脚本的裸导入已失效（命中了 `two/gen_train_data.py`）；
 * `seven` 的数据不含 KLS/KOE/SAU/TLV（历史不足 62 季，是过滤器的必然结果）；
 * `full_retrain.py` 的**训练段（阶段 3）尚未端到端实跑过**；
 * 几处本机绝对路径需要按环境修改。
@@ -64,13 +63,12 @@
 
 ### 移除
 
-* **计划/待改进类文档 3 份**（内容要么已实现、要么已被后续实验取代）：
-  `one/loss优化实验规划.md`、`zero/zero待改进.md`、`two/nowcast/rd_plan_daily2fin.md`。
+* **计划/待改进类文档 2 份**（内容要么已实现、要么已被后续实验取代）：
+  `one/loss优化实验规划.md`、`zero/zero待改进.md`。
 * **论文与摘录 6 份**（PDF 3.3 MB + 4 份读论文的摘录笔记）：
   两篇 LFM/基本面预测论文、`_paper_improving.txt`、`paper_lfm_1711.04837.md`、
   `euclidean_technologies.md`、`shiller.md`。
-* **两处目录说明**（`one/factor_screen/README.md`、`two/nowcast/README.md`）与
-  `one/实验结果_5win.md` 顶部的迁移说明块。
+* **目录说明**（`one/factor_screen/README.md`）与 `one/实验结果_5win.md` 顶部的迁移说明块。
 * 以上都移入 `_trash_20260928/docs/`（不是从历史里删除）；实验记录类文档全部保留。
 
 ### 变更
@@ -79,14 +77,14 @@
 
   | 原来的 | 职责 |
   |---|---|
-  | `full_retrain.py` | 数据编排：MySQL 导出 → 重生五个模型的 h5 →（可选）nowcast 分块 |
+  | `full_retrain.py` | 数据编排：MySQL 导出 → 重生五个模型的 h5 |
   | `retrain_all.py` | 训练编排：五模型 warm start / 部署 / 解析验证与测试指标 |
   | `refresh_model.py`（旧名，单数） | 更早的"数据+训练一把梭" —— 2026-09 已失效（模块级裸导入直接 ImportError、缺 two、训练在同进程里跑） |
 
   合并为 `refresh_models.py`，**语义不变**：`--stage data|train|all`、`--only`、`--data-only`、
-  `--nowcast` / `--variants` / `--nowcast-root`、`--skip-export` / `--skip-h5`、`--dry-run` 全部保留。
-  合并前逐项比对：五个模型的配方（10 个字段 × 5 个）、三处测试指标正则、`H5_JOBS`、
-  nowcast 相关常量 —— **全部逐字段一致**。
+  `--skip-export` / `--skip-h5`、`--dry-run` 全部保留。
+  合并前逐项比对：五个模型的配方（10 个字段 × 5 个）、三处测试指标正则、`H5_JOBS` ——
+  **全部逐字段一致**。
 
 * `retrain_all.py` 的**转发垫片已删除**（它只为"07:57 那次进行中的重训会在阶段 3 调用它"
   而存在；那次重训已终止，垫片随之移入 `_trash_20260928/`）。等价入口：
@@ -94,5 +92,8 @@
 * 入口文件名定为 **`refresh_models.py`（复数）**；文中出现的 `refresh_model.py`（单数）
   一律指"被它取代的那个旧脚本"。
 * `full_retrain.py` 已移入 `_trash_20260928/`（正在跑的进程已把它读进内存，不受影响）。
-* 文档里的脚本名引用同步更新：`README.md`、`two/train.py`、`two/get_two_predict.py`、
-  `two/nowcast/variants.py`。
+* 文档里的脚本名引用同步更新：`README.md`、`two/train.py`、`two/get_two_predict.py`。
+* **选票收紧一档**（2026-10-31）：`refresh_candidates.py` 的 `_pick_by_buffett()`
+  把 buffett 五档池子各缩一级 —— `全池 / 127 / 31 / 7 / 3` → `127 / 31 / 7 / 3 / 1`，
+  选股更严格；最严的「127」档现在只取 `buffett` 最便宜的 1 只（不再看 `up_down`）。
+  同步更新 `README.md` 与 `估值方法与指标总结.md` §2.5。

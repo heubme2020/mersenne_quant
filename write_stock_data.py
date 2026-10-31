@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import ssl
 import certifi
@@ -268,8 +268,13 @@ def write_exchange_stock_symbol_data(exchange: str):
     existing = set(get_symbol_list(exchange)) if table_name in get_table_names() else set()
 
     # FMP 最新 symbol 列表：有财务数据且属于该交易所
-    fs_syms  = set(pd.DataFrame(fetch_json(fmp('financial-statement-symbol-list')))['symbol'])
-    ex_syms  = set(pd.DataFrame(fetch_json(fmp(f'company-screener?limit=131071&isEtf=false&isFund=false&exchange={exchange}')))['symbol'])
+    fs_syms = set(pd.DataFrame(fetch_json(fmp('financial-statement-symbol-list')))['symbol'])
+    scr = pd.DataFrame(fetch_json(fmp(f'company-screener?limit=131071&isEtf=false&isFund=false&exchange={exchange}')))
+    # 下载侧再滤一道：URL 参数不一定可靠，直接用响应里的 isEtf/isFund 字段排除基金/ETF
+    for col in ('isEtf', 'isFund'):
+        if col in scr.columns:
+            scr = scr[~scr[col].fillna(False).astype(bool)]
+    ex_syms = set(scr['symbol'])
     new_syms = list((fs_syms & ex_syms) - existing)
 
     if not new_syms:
@@ -812,9 +817,12 @@ def update_exchange_data(exchange: str):
 
 
 def append_exchange_data(exchange: str):
+    write_exchange_income_data(exchange, 1)
+    write_exchange_balance_data(exchange, 1)
+    write_exchange_cashflow_data(exchange, 1)
+    write_exchange_indicator_data(exchange)
     write_exchange_daily_data(exchange, 31)
-    get_exchange_daily_data(exchange)
-
+    get_exchange_data(exchange)
 
 
 

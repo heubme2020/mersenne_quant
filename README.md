@@ -56,7 +56,7 @@
 | `seven/` | 自由现金流 / 分红 / 净资产，三分支 × 1/3/7 季及合并分 | **估值主体**（产出 `dcf`） | 3×3 头；损失按各头标准差归一 |
 | `three/` | growth（上行）/ death（下行）双头 × 1/3/7 季 | 成长与风险 | 逆方差加权 + 比值项 |
 | `zero/` | 未来 **381 个交易日最大回撤**（取负） | **避雷** | 7 个财务比率 × 3 季，输出 `[-1,0]` |
-| `two/` | nowcast 三头：毛利 / 营收 / 总资产的「中位变化」 | 候选池**砍半**（`up_down`=毛利头） | 889 天日线窗口（1017×31）+ 128 天辅助重建头 |
+| `two/` | 三头：毛利 / 营收 / 总资产的「中位变化」 | 候选池**砍半**（`up_down`=毛利头） | 889 天日线窗口（1017×31）+ 128 天辅助重建头 |
 | `one/` | 5 个期限的 close 形态标签 | **最终排序**（`up_down`） | 24 个技术因子（`new24`，见 `one/factor_screen/`） |
 
 ## 三、快速开始
@@ -83,7 +83,7 @@ cp config_local.example.py config_local.py     # 然后填值
 
 * **星期路由**：周五跑全链（含数据更新）；周六/周日空转；**周一~周四只跑 schloss/two/one**
   （财务数据没更新，只需重算与日线相关的那几环）。
-* **选票规则**：把 `one` 的股票池按 `buffett` 降序取五档 —— 全池 / 127 / 31 / 7 / 3 ——
+* **选票规则**：把 `one` 的股票池按 `buffett` 降序取五档 —— 127 / 31 / 7 / 3 / 1 ——
   每档内再按 `up_down` 降序取第一名，共 **5 只票**（邮件按 `1: 3: 7: 31: 127:` 五行发出）。
 * **打分公式**：`buffett = dcf × 每股净资产 / 收盘价 + schloss`
   （`dcf` 来自 seven；实现见 `two/get_two_predict.py`）。
@@ -110,7 +110,7 @@ python refresh_models.py              # 正式跑
 这是本仓库里最有价值的部分 —— 记录了什么**没**work、以及为什么。
 以下引自仓库内的文档（括号里是出处）：
 
-**1. 朴素持续性基准碾压所有价格因子**（`two/nowcast/phase1_label_v2.md` §2）
+**1. 朴素持续性基准碾压所有价格因子**（`估值方法与指标总结.md`）
 
 预测财务量的变化时，"上一轮重演"这个**完全不用价格信息**的基准强得离谱：
 
@@ -162,8 +162,7 @@ write_stock_data.py     数据修补与指标表刷新（重试 / 多数据源�
 schloss/                每股运营资本/股价（格雷厄姆 NCAV），独立一项
 one/ … zero/            五个模型（见上表）
 ├─ one/factor_screen/   new24 因子集的筛选存档（脚本 + 结果表）
-├─ one/实验结果_5win.md  因子集怎么选出来的
-└─ two/nowcast/         nowcast 实验线（two 的标签来源；u1~u9 变体、收益端结论）
+└─ one/实验结果_5win.md  因子集怎么选出来的
 config_local.example.py 凭据模板（真值那份 config_local.py **不入库**）
 data/  */train/  *.pt   数据与权重（*.pt 只入库 5 个生产模型 + legacy）
 ```
@@ -177,7 +176,6 @@ data/  */train/  *.pt   数据与权重（*.pt 只入库 5 个生产模型 + leg
 | `one/实验结果_5win.md` | 现役因子集 `new24` 的筛选过程 |
 | `three损失函数优化实验.md`、`indicator特征删减*.md` | 各模块的实验记录 |
 | `zero/zero标签与特征改造论证.md` | 避雷模型的标签/特征论证 |
-| `two/nowcast/*.md` | nowcast 实验线：`phase1_label_v2.md`（标签定案）、`phase0_label_anchor_experiment.md`、`two_2x2_experiment.md`、估值分析等 |
 | `M06-06-gtja191-formula-reference.md` | 用到的 GTJA191 因子公式参考 |
 
 ## 十、已知问题与未完成
@@ -185,14 +183,10 @@ data/  */train/  *.pt   数据与权重（*.pt 只入库 5 个生产模型 + leg
 * **`one` 的 warm start 会把 affine 带进训练**：`one/train.py` 载入旧 `.pt` 后没有把
   反标准化 buffer 还原成恒等，而训练标签是 z 空间的 —— 等于输出层从一个量级错的起点出发。
   （`two/train.py` 已经修了这一点。）**未修**，因为它会改变 one 下一次重训的起点。
-* **`two/nowcast/` 里两个脚本的裸导入已经坏了**：`test_two_model.py`、
-  `validate_factors_vs_price.py` 的 `from gen_train_data import add_technical_factor`
-  命中了 `two/gen_train_data.py`（该名字在 `one/gen_train_data.py` 里）。见该目录的 README。
 * **`seven` 的数据不含 KLS/KOE/SAU/TLV 四个交易所**：它们的季度历史不足 62 季，
   装不下"31 季过去 + 31 季未来"的标签窗口（`three` 只要 31 季、`zero` 只要 3 季，所以它们照常出文件）。
   这是过滤器的必然结果，不是故障。
 * **训练段（`refresh_models.py` 的 `--stage train`）还没有端到端跑过一次**：命令拼装、五个模型的 CLI、
   指标解析都已逐条验证（用真实日志），但整段串起来尚未实跑。
-* 代码里有几处**本机绝对路径**（如 `refresh_models.py` 的 `C:/quant_data/nowcast4`、
-  `one/train.py` 的 `D:/quant_data/train_global`）—— 换机器要自己改。
+* 代码里有几处**本机绝对路径**（如 `one/train.py` 的 `D:/quant_data/train_global`）—— 换机器要自己改。
 * 研究侧未完成项见 `估值方法与指标总结.md` §8.3。

@@ -21,13 +21,6 @@ _trash_*/
 
 # ---- 各模型 train.py 自己写的历史 .pt 备份 ----
 */backup/
-
-# ---- nowcast 实验线的输出（1.6 GB）----
-#    ⚠️ .py / .md / test_symbols_all31_889.txt 是实验线本身，照常入库；
-#       这里排掉的只是"跑出来的结果"。
-nowcast/results/
-nowcast/returns_eval*/
-nowcast/two_exp/
 nowcast/phase0*_results/
 nowcast/*.pkl
 

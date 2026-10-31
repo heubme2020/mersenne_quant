@@ -23,6 +23,10 @@ NEW_FACTOR_H5 = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'factor
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根（本脚本在 <root>/<model>/）
 VERBOSE = '--verbose' in sys.argv    # 默认只打摘要行；加 --verbose 才打整张表（旧行为）
 
+# 市场 -> 交易所列表 / 产物文件后缀：美股 + A 股两套独立管线，不混横截面
+MARKET_EXCHANGES = {'CN': ['SHZ', 'SHH'], 'US': ['AMEX', 'NASDAQ', 'NYSE']}
+MARKET_SUFFIX = {'CN': '', 'US': '_us'}
+
 def load_new_factors():
     store = pd.HDFStore(NEW_FACTOR_H5, mode='r')
     factors = {}
@@ -196,6 +200,7 @@ def compute_aligned_updown(df):
 
     pearson loss 是尺度无关的，各 horizon 预测尺度可能不同；求和前做截面 z-score
     让 5 个 horizon 等权，避免尺度大的 horizon 暗中主导 up_down。
+    （调用方已按市场拆好数据，这里只需按日期分组。）
     """
     zs = []
     for h in HORIZONS:
@@ -226,25 +231,27 @@ def raise_on_empty_merge(merged, left_dates, right_dates, source):
     )
 
 
-def get_one_candidates(check_days=0, target_date=None):
+def get_one_candidates(market='CN', check_days=0, target_date=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(device)
 
     data_name = os.path.join(os.path.dirname(__file__), '../data/')
-    daily_shz = pd.read_csv(data_name + 'SHZ/daily_shz.csv')
-    daily_shh = pd.read_csv(data_name + 'SHH/daily_shh.csv')
-    daily_data = pd.concat([daily_shz, daily_shh], axis=0).reset_index(drop=True)
+    exchanges = MARKET_EXCHANGES[market]
+    daily_data = pd.concat(
+        [pd.read_csv(data_name + ex + '/daily_' + ex.lower() + '.csv') for ex in exchanges],
+        axis=0).reset_index(drop=True)
     if target_date is not None:
         daily_data = daily_data[daily_data['date'] <= int(target_date)].reset_index(drop=True)
     if FACTOR_MODE in ('plan1', 'plan2', 'plan1_ts', 'plan2_ts'):
         daily_data = merge_new_factors(daily_data)
 
-    two_data = pd.read_csv(data_name + '../two/two_predict.csv')
-    # 2026-10-27：三个头不透传；保留 two 的 up_down（营收口径砍半值 = revMed7×总资产/市值），
-    # 改名 up_down_rev 以免和 one 的 up_down（择时分）冲突，透传到 buy_predict.csv。
+    two_data = pd.read_csv(data_name + f'../two/two_predict{MARKET_SUFFIX[market]}.csv')
+    # 2026-10-30：三个头不透传；保留 two 的 up_down（毛利口径砍半值 = gpMed7×总资产/市值×100），
+    # 改名 up_down_gp 以免和 one 的 up_down（择时分）冲突，透传到 buy_predict.csv。
     two_data.drop(columns=['gpMed7', 'revMed7', 'taMed7'], inplace=True)
+    # 本文件已按市场拆分，直接取本市场中位数
     two_data = two_data[two_data['up_down'] > two_data['up_down'].median()].reset_index(drop=True)
-    two_data = two_data.rename(columns={'up_down': 'up_down_rev'})
+    two_data = two_data.rename(columns={'up_down': 'up_down_gp'})
     two_data = two_data.sort_values('buffett', ascending=False).reset_index(drop=True)
     buffett_list = two_data['symbol'].to_list()
 
@@ -274,7 +281,7 @@ def get_one_candidates(check_days=0, target_date=None):
     raise_on_empty_merge(predict_data, predict_dates, two_data['date'].tolist(), 'two/two_predict.csv')
     predict_data['up_down'] = compute_aligned_updown(predict_data)
     predict_data = predict_data.sort_values('buffett', ascending=False).reset_index(drop=True)
-    one_predict_name = os.path.join(os.path.dirname(__file__), 'one_predict.csv')
+    one_predict_name = os.path.join(os.path.dirname(__file__), f'one_predict{MARKET_SUFFIX[market]}.csv')
     print(f'[one] 完成：{len(predict_data)} 行 × {predict_data.shape[1]} 列 -> '
           f'{os.path.relpath(one_predict_name, ROOT)}（{time.time()-t0:.1f}s）', flush=True)
     if VERBOSE: print(predict_data)
@@ -322,19 +329,20 @@ def get_one_all(check_days=0):
     predict_data.to_csv(one_predict_name, index=False)
 
 
-def refresh_buy(target_date=None):
-    get_one_candidates(target_date=target_date)
+def refresh_buy(market='CN', target_date=None):
+    get_one_candidates(market, target_date=target_date)
     data_name = os.path.join(os.path.dirname(__file__), '../data/')
-    daily_shz = pd.read_csv(data_name + 'SHZ/daily_shz.csv')
-    daily_shh = pd.read_csv(data_name + 'SHH/daily_shh.csv')
-    daily_data = pd.concat([daily_shz, daily_shh], axis=0).reset_index(drop=True)
+    exchanges = MARKET_EXCHANGES[market]
+    daily_data = pd.concat(
+        [pd.read_csv(data_name + ex + '/daily_' + ex.lower() + '.csv') for ex in exchanges],
+        axis=0).reset_index(drop=True)
     if target_date is not None:
         daily_data = daily_data[daily_data['date'] <= int(target_date)].reset_index(drop=True)
     latest_date = daily_data['date'].max()
     daily_data = daily_data[daily_data['date'] == latest_date].copy().reset_index(drop=True)
     daily_data.drop(columns=['open', 'low', 'high', 'volume'], inplace=True)
 
-    buy_data = pd.read_csv(data_name + '../one/one_predict.csv')
+    buy_data = pd.read_csv(data_name + f'../one/one_predict{MARKET_SUFFIX[market]}.csv')
     if buy_data.empty:
         raise RuntimeError(
             "one_predict.csv 为空（本次没有任何候选通过筛选）。"
@@ -344,10 +352,10 @@ def refresh_buy(target_date=None):
     buy_data = buy_data.sort_values('up_down', ascending=False).reset_index(drop=True)
     # 精简列（2026-10-27 用户定案）：关键信息 + 最终决定值 + two 的砍半值 + 各模型决定值。
     #   symbol/date/endDate/close = 基本信息；buffett/up_down = 最终决定值；
-    #   up_down_rev = two 的营收口径砍半值（revMed7×总资产/市值）；dcf/growth_death/zero/schloss = 其余模型决定值。
+    #   up_down_gp = two 的毛利口径砍半值（gpMed7×总资产/市值×100）；dcf/growth_death/zero/schloss = 其余模型决定值。
     buy_data = buy_data[['symbol', 'date', 'endDate', 'close', 'buffett', 'up_down',
-                         'up_down_rev', 'dcf', 'growth_death', 'zero', 'schloss']]
-    buy_predict_name = os.path.join(os.path.dirname(__file__), '../buy_predict.csv')
+                         'up_down_gp', 'dcf', 'growth_death', 'zero', 'schloss']]
+    buy_predict_name = os.path.join(os.path.dirname(__file__), f'../buy_predict{MARKET_SUFFIX[market]}.csv')
     print(f'[one] buy_predict.csv：{len(buy_data)} 行 × {buy_data.shape[1]} 列 -> '
           f'{os.path.relpath(buy_predict_name, ROOT)}', flush=True)
     if VERBOSE: print(buy_data)

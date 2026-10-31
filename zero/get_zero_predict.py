@@ -13,6 +13,10 @@ VERBOSE = '--verbose' in sys.argv    # 默认只打摘要行；加 --verbose 才
 
 pd.set_option('future.no_silent_downcasting', True)
 
+# 市场 -> 交易所列表 / 产物文件后缀：美股 + A 股两套独立管线，不混横截面
+MARKET_EXCHANGES = {'CN': ['SHZ', 'SHH'], 'US': ['AMEX', 'NASDAQ', 'NYSE']}
+MARKET_SUFFIX = {'CN': '', 'US': '_us'}
+
 
 def select_device():
     """选择设备：优先 CUDA，但会实际跑一个 matmul 验证 kernel 可用，否则退回 CPU。
@@ -29,7 +33,7 @@ def select_device():
     return torch.device('cpu')
 
 
-def get_exchange_zero(exchange):
+def get_exchange_zero(exchange, market='CN'):
     t0 = time.time()
     # 检查GPU是否可用
     device = select_device()
@@ -42,9 +46,9 @@ def get_exchange_zero(exchange):
     exchange = exchange[0].lower() + exchange[1:]
     data_name = os.path.join(os.path.dirname(__file__), '../data/' + upper_exchange)
     indicator_data = pd.read_csv(data_name + '/indicator_' + exchange + '.csv')
-    three_data = pd.read_csv(data_name + '/../../three/three_predict.csv')
+    three_data = pd.read_csv(data_name + f'/../../three/three_predict{MARKET_SUFFIX[market]}.csv')
 
-    # 截取three股票里大于median值的股票列表
+    # 截取three股票里大于median值的股票列表（本文件已按市场拆分，直接取本市场中位数）
     three_data = three_data[three_data['growth_death'] > three_data['growth_death'].median()].reset_index(drop=True)
     three_list = three_data['symbol'].to_list()
     groups = list(indicator_data.groupby('symbol'))
@@ -119,17 +123,17 @@ def get_exchange_zero(exchange):
     predict_data.to_csv(data_name + '/zero_predict.csv', index=False)
 
 
-def refresh_zero():
+def refresh_zero(market='CN'):
     t0 = time.time()          # 总计时（下面的 per-exchange t0 是局部变量，互不影响）
-    get_exchange_zero('SHZ')
-    get_exchange_zero('SHH')
+    exchanges = MARKET_EXCHANGES[market]
+    for ex in exchanges:
+        get_exchange_zero(ex, market)
     data_name = os.path.join(os.path.dirname(__file__), '../data/')
-    predict_data_shenzhen = pd.read_csv(data_name + 'SHZ/zero_predict.csv', engine='pyarrow')
-    predict_data_shanghai = pd.read_csv(data_name + 'SHH/zero_predict.csv', engine='pyarrow')
+    frames = [pd.read_csv(data_name + f'{ex}/zero_predict.csv', engine='pyarrow') for ex in exchanges]
 
-    predict_data = pd.concat([predict_data_shenzhen, predict_data_shanghai], axis=0)
+    predict_data = pd.concat(frames, axis=0)
     predict_values = predict_data.sort_values(by='zero', ascending=False).reset_index(drop=True)
-    zero_predict_name = os.path.join(os.path.dirname(__file__), 'zero_predict.csv')
+    zero_predict_name = os.path.join(os.path.dirname(__file__), f'zero_predict{MARKET_SUFFIX[market]}.csv')
     print(f"[zero] 汇总：{len(predict_values)} 行 -> {os.path.relpath(zero_predict_name, ROOT)}"
           f"（{time.time()-t0:.1f}s）", flush=True)
     if VERBOSE: print(predict_values)

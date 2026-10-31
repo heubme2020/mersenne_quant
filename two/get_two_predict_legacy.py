@@ -183,7 +183,7 @@ def raise_on_empty_merge(merged, left_dates, right_dates, source):
 def get_two_candidates(check_days=0, target_date=None):
     # 检查GPU是否可用
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # 2026-09-26：`two.pt` 现在是【生产模型】（nowcast 架构，Nowcast 类），而本脚本要的是
+    # 2026-09-26：`two.pt` 现在是【生产模型】（TwoNet 架构），而本脚本要的是
     # 旧的 TWO 架构（two_model.TWO）—— 旧权重已改名 `two_legacy.pt`。
     # 别再指回 two.pt：类不匹配会直接抛异常，而且是每天选票时才发现。
     model_name = os.path.join(os.path.dirname(__file__), 'two_legacy.pt')

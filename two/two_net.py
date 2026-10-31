@@ -1,21 +1,15 @@
-"""`two` 的模型：`Nowcast`（3 头）—— 逐字复制自 `two/nowcast/model.py`（+ `one/one_model.py`）。
+"""`two` 的模型：`TwoNet`（3 头）—— 逐字复制自旧实验线的模型定义（+ `one/one_model.py`）。
 
 ## 为什么要复制一份
 
-用户 2026-09-26 的要求：**two 不再依赖 `nowcast/` 目录**（它是实验目录，要清理冗余）。
-推理端 `two/get_two_predict.py` 已经改成从 `two_features` 取特征了，训练端的模型定义同理。
+`two/` 要自给自足，不依赖旧的实验目录。推理端 `two/get_two_predict.py` 从 `two_features`
+取特征，训练端的模型定义同理，放在本文件里（`two/train.py` 直接 import）。
 
-## 与原文件的逐字对应
+## 头布局
 
-    two/nowcast/model.py                     本文件
-    ---------------------------------    ---------------------------------------------
-    from one_model import ONE, Regr...   同名类，改用【显式路径导入】（见下面的坑）
-    from labels import FIELDS, ...       from two_labels（头布局：u9 = 3 字段 × 1 期限）
-    class Nowcast(_ONE): ...             类体、__init__ 默认值、forward 全部逐字保留
-
-唯一的语义差别：头布局常量取的模块不同（原文件取 `two/nowcast/labels.py` 的 3×3 基线，
-本文件取 `two_labels` 的 u9 = gpMedP3F/revMedP3F/taMedP3F，即 3 字段 × 1 期限）。
-`Nowcast(n_fields=3, n_horizons=1)` 与现有 `two/two.pt`（3 头、1,028,486 参数）同构。
+本文件取 `two_labels` 的 u9 = gpMedP3F/revMedP3F/taMedP3F（3 字段 × 1 期限）。
+`TwoNet(n_fields=3, n_horizons=1)` 与现有 `two/two.pt`（3 头）同构；类体、__init__ 默认值、
+forward 逐字保留自旧实验线的模型定义。
 
 ## ⚠️ 坑（与 two_features.py 记的是同一个）
 
@@ -38,12 +32,12 @@ def _load_one_module(name):
     """从 one/ 按【绝对路径】加载模块 —— 不受 sys.path 顺序影响。
 
     ⚠️ 模块名必须保持 `name` 本身（不是 `_one_{name}`）并注册进 sys.modules：
-    本文件里的 `Nowcast` **继承** `one_model.ONE`，它的子模块（Encoder/AttentionPool/
+    本文件里的 `TwoNet` **继承** `one_model.ONE`，它的子模块（Encoder/AttentionPool/
     RegressionHead/...）都是 `one_model` 里的类。`torch.save(model)` 会把那些子模块的
     **类**按 `模块名 类名` 存进 pickle，所以模块名一旦改成私有的 `_one_one_model`，
     存盘当场就崩：`PicklingError: Can't pickle <class '_one_one_model.Encoder'>`
-    （2026-09-27 实测踩到）。注册成 `one_model` 还顺带让 .pt 里的引用与
-    two/nowcast/model.py 存出来的完全一致（同一个 one/one_model.py）。
+    （2026-09-27 实测踩到）。注册成 `one_model` 还顺带让 .pt 里的引用与旧实验线
+    存出来的完全一致（同一个 one/one_model.py）。
     """
     path = os.path.join(ONE, f'{name}.py')
     spec = importlib.util.spec_from_file_location(name, path)
@@ -69,10 +63,10 @@ N_HEADS = N_FIELDS * N_HORIZONS
 # u9 只有一个期限，且头名本身已经含了「P3F」（过去 3 季 / 前向 7 季），所以不再拼期限后缀
 # —— 与 h5 里 `key='label'` 的列名一字不差。
 FLAT_NAMES = list(FIELDS)
-HEAD_NAMES = FLAT_NAMES          # 与 nowcast 的叫法对齐（那边 train.py 用的就是 HEAD_NAMES）
+HEAD_NAMES = FLAT_NAMES          # 与旧线的叫法对齐（train.py 用的就是 HEAD_NAMES）
 
 
-class Nowcast(_ONE):
+class TwoNet(_ONE):
     """与 one.ONE 完全同构，只把标量头换成 (B, 字段, 期限)。"""
 
     def __init__(self, input_shape=(31, 127 * 7), d_model=128, num_heads=8,
@@ -97,7 +91,7 @@ class Nowcast(_ONE):
 
 
 if __name__ == '__main__':
-    m = Nowcast([31, 127 * 7])
+    m = TwoNet([31, 127 * 7])
     x = torch.randn(2, 127 * 7, 31)
     aux, pred = m(x)
     print('aux', tuple(aux.shape), 'pred', tuple(pred.shape))

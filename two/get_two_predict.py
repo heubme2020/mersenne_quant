@@ -10,44 +10,41 @@ from tqdm import tqdm
 pd.set_option('future.no_silent_downcasting', True)
 
 # ==============================================================================
-# 2026-09-25 起，`two` 阶段由 nowcast 那条线训出来的模型承担；
-# 2026-09-26 起**文件名按【角色】定**：two 这一档就读 `two.pt`，不再暴露来源。
+# 2026-09-25 起，`two` 阶段由这条线训出来的模型承担；
+# 2026-09-26 起**文件名按【角色】定**：two 这一档就读 `two.pt`，不暴露来源。
 #   * 模型：`two.pt`（就放在本目录），3 个头。
-#     以前叫 `nowcast_u9.pt` —— 语义误导：它是"two 阶段的模型"，不是"nowcast 的 u9"。
-#     训练产物仍由 `two/nowcast/train.py` 写在 `nowcast/` 下，`refresh_models.py` 训完复制到这里。
 #     ⚠️ 落盘列名仍是硬编码的 gpMed7/revMed7/taMed7（不取自模型头名）——u9 的真实头名是
 #        gpMedP3F/revMedP3F/taMedP3F。列名只是下游认的标签，但**名不副实**，别拿它当语义。
 #     gpMed7/revMed7/taMed7 = 未来 7 季「毛利/营收/总资产」中位数的前后变化 ÷ 总资产[jc]
 #   * 本阶段行为：把候选池按【估值口径】砍掉后一半。动手的是下游
 #     `one/get_one_predict.py` 那行 `up_down > up_down.median()`。
-#     2026-10-27 用户改：up_down = 营收头 × 总资产/市值（= 预测营收改善额 ÷ 市值），
+#     2026-10-30 用户改：up_down = 毛利头 × 总资产/市值 × 100（= 预测毛利改善额 ÷ 市值，×100 成百分比口径），
 #     即「估值砍半」。**只改筛选逻辑，模型与三个头都不动**；财务缺失时 up_down 记 NaN，
 #     本文件下方 dropna 会把它丢掉（≈ 不进 one 的池子）。
-#     选营收头（非毛利头）的理由：rev 可预测性高于 gp（逐日 IC ta > rev > gp）、且 rev 不在
-#     buffett 公式里（毛利头已被 ③ 毛利/市值 用掉，用它砍半会两层价值筛选叠加）。
+#     （2026-10-27 曾改成营收头 —— rev 可预测性高于 gp、且不与 ③ 毛利/市值 叠加 —— 2026-10-30 又改回毛利头。）
 #   * 历史：2026-09-25 试过【毛利头】× 总资产/市值（实测 IC：原值 1/3/7 季 −0.001/−0.006/−0.040
 #     → 换算后 +0.014/+0.013/+0.006），当时因「排序头部被推向大资产/低市值的银行保险股、
 #     与 buffett 形成两层价值筛选叠加」回退为毛利头原值；2026-10-27 改用【营收头】重新启用。
-#   * 三个头落盘列名 = nowcast 的头名 `gpMed7/revMed7/taMed7`（旧版是
+#   * 三个头落盘列名 = 模型头名 `gpMed7/revMed7/taMed7`（旧版是
 #     seven/thirty_one/two_hundred_and_twenty_seven，语义已完全不同）。
 #     ⚠️ 这两处列名必须与 `one/get_one_predict.py` 里的 drop 列表一致。
-#   * 回退两条路：
-#     ① 只换模型权重（同架构）—— 把 `_snapshot_20260926/two/nowcast_u6.pt` 复制成 `two.pt`；
-#     ② 换回旧实现 —— 跑 `get_two_predict_legacy.py`，它读 `two_legacy.pt`
-#        （旧 TWO 架构的权重，2026-09-26 从原 `two.pt` 改名而来；两套架构不通用，别混）。
-#   * 特征必须与训练完全一致。2026-09-26 起用 `two_features.build_x`（从
-#     two/nowcast/gen_data2.py 逐字抽取、逐位校验过），不再从 nowcast 导入，也不再用本文件里
-#     那份 add_technical_factor 复制品（它算的是旧因子集 CURRENT_24，且 idx 分母写错成 380）。
+#   * 回退：换回旧实现 —— 跑 `get_two_predict_legacy.py`，它读 `two_legacy.pt`
+#     （旧 TWO 架构的权重，2026-09-26 从原 `two.pt` 改名而来；两套架构不通用，别混）。
+#   * 特征必须与训练完全一致。2026-09-26 起用 `two_features.build_x`（从旧实验线
+#     逐字抽取、逐位校验过），不再用本文件里那份 add_technical_factor 复制品
+#     （它算的是旧因子集 CURRENT_24，且 idx 分母写错成 380）。
 # ==============================================================================
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../one'))
 # 2026-09-26：改从 **two 自己** 的 two_features 导入（原先 `from gen_data2 import ...`）。
-# 这一步是为了让**生产推理不再依赖 nowcast/ 目录** —— nowcast 是实验目录，用户要清理冗余，
-# 删掉它之后 two 必须照样能跑。two_features 里的 build_x 是从 gen_data2 **逐字抽取**的，
-# 并由 `two/_verify_vs_nowcast.py` 用真实日线窗口做过**逐位相等**校验（6/6 通过）。
-from two_features import build_x, RAW as NC_RAW, WINDOW as NC_WINDOW, DAYS_INPUT as NC_DAYS_INPUT, available_date  # noqa: E402
+# two_features 里的 build_x 是从旧实验线 **逐字抽取**、并用真实日线窗口做过**逐位相等**校验（6/6）。
+from two_features import build_x, RAW as NC_RAW, WINDOW as NC_WINDOW, DAYS_INPUT as NC_DAYS_INPUT  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 仓库根（本脚本在 <root>/<model>/）
 VERBOSE = '--verbose' in sys.argv    # 默认只打摘要行；加 --verbose 才打整张表（旧行为）
+
+# 市场 -> 交易所列表 / 产物文件后缀：美股 + A 股两套独立管线，不混横截面
+MARKET_EXCHANGES = {'CN': ['SHZ', 'SHH'], 'US': ['AMEX', 'NASDAQ', 'NYSE']}
+MARKET_SUFFIX = {'CN': '', 'US': '_us'}
 
 # def add_technical_factor(data):
 #     # 均线
@@ -122,16 +119,32 @@ def raise_on_empty_merge(merged, left_dates, right_dates, source):
     )
 
 
-def load_ashare_fundamentals(data_name):
-    """A 股每只股票【最新已披露】季度的 (总资产, 毛利, 股本) -> {symbol: (avail, ta, gp, sh)}。
+CN_DEADLINE = {'0331': (4, 30), '0630': (8, 31), '0930': (10, 31), '1231': (4, 30)}
+# 美股 SEC 披露截止（保守取非加速申报人的上限，宁可晚用也不用未披露的报表）
+US_DEADLINE = {'0331': (5, 15), '0630': (8, 15), '0930': (11, 15), '1231': (3, 31)}
 
-    披露日按 A 股规则推算（`gen_data2.available_date`）；取 asof ≤ 预测日的最后一个季度
+
+def _deadline_dates(end_dates, deadline):
+    """季度末 -> 该财报的【最晚披露日】（YYYYMMDD）。与 two_features.available_date 同款，只是可换截止表。"""
+    out = np.empty(len(end_dates), dtype='int64')
+    for i, ed in enumerate(np.asarray(end_dates, dtype='int64')):
+        y, md = int(ed) // 10000, f'{int(ed) % 10000:04d}'
+        m, d = deadline[md]
+        out[i] = (y + (1 if md == '1231' else 0)) * 10000 + m * 100 + d
+    return out
+
+
+def load_fundamentals(data_name, market='CN'):
+    """每只股票【最新已披露】季度的 (总资产, 毛利, 股本) -> {symbol: (avail, ta, gp, sh)}。
+
+    披露日按市场规则推算（A 股用 A 股截止日、美股用 SEC 截止日）；取 asof ≤ 预测日的最后一个季度
     —— 生产上不能用还没披露的报表。
     用途（2026-09-26 用户定案）：第三个估值块 `毛利/市值` 的分子 =
         **最新季毛利 + 模型预测的毛利提升额**，其中 预测提升额 = 模型输出(Δ/总资产) × 总资产。
     """
+    exchanges = MARKET_EXCHANGES[market]
     frames = []
-    for ex in ('SHZ', 'SHH'):
+    for ex in exchanges:
         bal = pd.read_csv(f'{data_name}{ex}/balance_{ex.lower()}.csv',
                           usecols=['symbol', 'endDate', 'totalAssets'])
         inc = pd.read_csv(f'{data_name}{ex}/income_{ex.lower()}.csv',
@@ -141,7 +154,7 @@ def load_ashare_fundamentals(data_name):
     f['symbol'] = f.symbol.astype(str)
     f = f[f.endDate.astype(str).str[4:].isin(['0331', '0630', '0930', '1231'])]
     f = f.drop_duplicates(subset=['symbol', 'endDate'], keep='last')
-    f['avail'] = available_date(f.endDate.values)
+    f['avail'] = _deadline_dates(f['endDate'].values, CN_DEADLINE if market == 'CN' else US_DEADLINE)
     f = f.sort_values(['symbol', 'endDate']).reset_index(drop=True)
     out = {}
     for s, g in f.groupby('symbol', sort=False):
@@ -150,36 +163,36 @@ def load_ashare_fundamentals(data_name):
     return out
 
 
-def get_two_candidates(check_days=0, target_date=None):
+def get_two_candidates(market='CN', check_days=0, target_date=None):
     # 检查GPU是否可用
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # 模型文件按【角色】命名：two 这一档读 `two.pt`（不再叫 nowcast_u9.pt 那类暴露来源的名字）。
+    # 模型文件按【角色】命名：two 这一档读 `two.pt`。
     # 换用 u9 变体的依据：终点指标（逐日截面 IC vs 未来收益）上的**配对比较** —— 同一批
     # 44,352 行上 u9 至少不差于 u6（1/3 季打平、7 季更好），且多覆盖 1,818 行 / 11 只股票。
-    # 详见 `two/nowcast/paired_u6_u9.py`、`two/nowcast/variants.py` 的 u9 段、`refresh_models.py` 的 two 配方。
     # ⚠️ `two.pt` 必须存在，否则本文件会在这里直接抛异常、每日选票全断。
-    # 回退（同架构换权重）：cp _snapshot_20260926/two/nowcast_u6.pt two/two.pt
     model_name = os.path.join(os.path.dirname(__file__), 'two.pt')
     model = torch.load(model_name, weights_only=False).to(device)
     # 加载daily数据
     data_name = os.path.join(os.path.dirname(__file__), '../data/')
-    daily_shz = pd.read_csv(data_name + 'SHZ/daily_shz.csv')
-    daily_shh = pd.read_csv(data_name + 'SHH/daily_shh.csv')
-    daily_data = pd.concat([daily_shz, daily_shh], axis=0).reset_index(drop=True)
+    exchanges = MARKET_EXCHANGES[market]
+    daily_data = pd.concat(
+        [pd.read_csv(data_name + ex + '/daily_' + ex.lower() + '.csv') for ex in exchanges],
+        axis=0).reset_index(drop=True)
     # 与训练端一致（gen_data2.load_daily）：只保留 2000 年以后、且按 (symbol, date) 排序。
     # 不这样过滤的话，对历史不足 889 行的股票会用 2000 年前的行凑窗口 -> 特征出分布外。
     daily_data = daily_data[daily_data['symbol'].notna() & (daily_data['date'] >= 20000101)]
     daily_data = daily_data.sort_values(['symbol', 'date']).reset_index(drop=True)
     if target_date is not None:
         daily_data = daily_data[daily_data['date'] <= int(target_date)].reset_index(drop=True)
-    zero_data = pd.read_csv(data_name + '../zero/zero_predict.csv')
+    zero_data = pd.read_csv(data_name + f'../zero/zero_predict{MARKET_SUFFIX[market]}.csv')
     zero_data.drop(columns=['three'], inplace=True)
     zero_data.drop(columns=['seven'], inplace=True)
     zero_data.drop(columns=['thirty_one'], inplace=True)
+    # 本文件已按市场拆分，直接取本市场中位数
     zero_data = zero_data[zero_data['zero'] > zero_data['zero'].median()].reset_index(drop=True)
     print(f'[two] 上游 zero_predict.csv：{len(zero_data)} 只入选（zero > 中位数）', flush=True)
     if VERBOSE: print(zero_data)
-    schloss_data = pd.read_csv(data_name + '../schloss/schloss.csv')
+    schloss_data = pd.read_csv(data_name + f'../schloss/schloss{MARKET_SUFFIX[market]}.csv')
     schloss_data.drop(columns=['endDate'], inplace=True)
     print(f'[two] 上游 schloss.csv：{len(schloss_data)} 只', flush=True)
     if VERBOSE: print(schloss_data)
@@ -191,7 +204,7 @@ def get_two_candidates(check_days=0, target_date=None):
     buffett_list = buffett_data['symbol'].to_list()
     # 第三个估值块的分子要用的财务数据：最新【已披露】季度的 总资产/毛利/股本
     print('[two] 读财务数据（总资产 / 毛利 / 股本）...', flush=True)
-    funda = load_ashare_fundamentals(data_name)
+    funda = load_fundamentals(data_name, market)
     groups = list(daily_data.groupby('symbol'))
     t0 = time.time()
     print(f'[two] 候选预测：日线 {len(groups)} 只 -> buffett 池 {len(buffett_list)} 只', flush=True)
@@ -210,16 +223,16 @@ def get_two_candidates(check_days=0, target_date=None):
             continue
         date = daily_group['date'].iloc[-1]
 
-        # --- 特征：完全复用 nowcast 训练时的那一份（归一化 / 因子集 / idx 分母都在里面）---
+        # --- 特征：完全复用训练时的那一份（归一化 / 因子集 / idx 分母都在里面）---
         daily_input = build_x(daily_group)
         if daily_input is None:        # 窗口末行的 close/volume 非正
             continue
         # build_x 返回 1017 行（889 输入 + 128 辅助），模型只吃前 889 行 —— 训练时也是 xf[:, :DAYS_INPUT]
         daily_input = torch.tensor(daily_input[:NC_DAYS_INPUT]).unsqueeze(0).float().to(device)
-        _, scalar = model(daily_input)          # nowcast: (aux, scalar)，scalar = (B, 3 字段, 1 期限)
+        _, scalar = model(daily_input)          # (aux, scalar)，scalar = (B, 3 字段, 1 期限)
         heads = scalar.squeeze(0)[:, 0].cpu().detach().numpy()     # [毛利, 营收, 总资产]
         gp, rev, ta = float(heads[0]), float(heads[1]), float(heads[2])
-        # 三个头按 nowcast 自己的头名落盘。
+        # 三个头按模型自己的头名落盘。
         # ⚠️ 改名后必须同步改 `one/get_one_predict.py` 里那行 drop 列表，否则 one 会 KeyError。
         # --- 第三个估值块：毛利/市值，分子 = 最新季毛利 + 模型预测的毛利提升额 ---
         #     预测提升额 = 模型输出(Δ/总资产) × 总资产；总资产取【最新已披露】季度（lag-safe）
@@ -240,9 +253,10 @@ def get_two_candidates(check_days=0, target_date=None):
         else:
             gp_yield = np.nan
             n_skip_funda += 1
-        # 砍半口径（2026-10-27 用户改）：估值口径 = 预测营收改善额 ÷ 市值 = revMed7 × 总资产 / 总市值。
-        # 只改筛选逻辑，模型与三个头都不动。财务缺失时记 NaN（下方 dropna 会把这行丢掉）。
-        up_down = rev * ta_val / mcap if (np.isfinite(ta_val) and np.isfinite(mcap) and mcap > 0) else np.nan
+        # 砍半口径（2026-10-30 用户改）：估值口径 = 预测毛利改善额 ÷ 市值 × 100 = gpMed7 × 总资产 / 总市值 × 100。
+        # ×100 是把它变成「百分比」量级，看着不特别小；只改筛选逻辑，模型与三个头都不动。
+        # 财务缺失时记 NaN（下方 dropna 会把这行丢掉）。
+        up_down = gp * ta_val / mcap * 100 if (np.isfinite(ta_val) and np.isfinite(mcap) and mcap > 0) else np.nan
         predict_result = {'symbol': symbol, 'date': int(date), 'gpMed7': gp, 'revMed7': rev,
                           'taMed7': ta, 'up_down': up_down, 'gp_yield': gp_yield}
         predict_list.append(predict_result)
@@ -339,7 +353,7 @@ def get_two_candidates(check_days=0, target_date=None):
     predict_data.drop(columns=['gp_yield'], inplace=True)      # 内部列，不落盘（避免级联进 one/buy）
     predict_data = predict_data.sort_values('buffett', ascending=False)
     predict_data = predict_data.reset_index(drop=True)
-    two_predict_name = os.path.join(os.path.dirname(__file__), 'two_predict.csv')
+    two_predict_name = os.path.join(os.path.dirname(__file__), f'two_predict{MARKET_SUFFIX[market]}.csv')
     print(f'[two] 完成：{len(predict_data)} 行 × {predict_data.shape[1]} 列 -> '
           f'{os.path.relpath(two_predict_name, ROOT)}（{time.time()-t0:.1f}s）', flush=True)
     if VERBOSE: print(predict_data)
