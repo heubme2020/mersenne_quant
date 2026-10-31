@@ -27,6 +27,10 @@ VERBOSE = '--verbose' in sys.argv    # 默认只打摘要行；加 --verbose 才
 MARKET_EXCHANGES = {'CN': ['SHZ', 'SHH'], 'US': ['AMEX', 'NASDAQ', 'NYSE']}
 MARKET_SUFFIX = {'CN': '', 'US': '_us'}
 
+# 数据闸门（2026-10-31）：买入池的最低收盘价。A股 ¥1 / 美股 $1，都是两地交易所的退市线，
+# 低于它的一般是仙股或已进入退市程序的票。
+MIN_CLOSE = 1.0
+
 def load_new_factors():
     store = pd.HDFStore(NEW_FACTOR_H5, mode='r')
     factors = {}
@@ -348,6 +352,29 @@ def refresh_buy(market='CN', target_date=None):
             "one_predict.csv 为空（本次没有任何候选通过筛选）。"
             "不要写出空的 buy_predict.csv，否则下游会以 IndexError 的形式报错。"
         )
+
+    # ============ 数据闸门（2026-10-31）：剔除退市/停牌/仙股/缺字段的垃圾票 ============
+    # 背景：退市/停牌股的最后日线日期会停在很早以前（美股实测有 110 只过期票，最早到 2016 年），
+    # 它们会带着旧日期混进池子、污染 buffett 排序，甚至 up_down 为 NaN。这里只做「纯正确性」过滤：
+    # 不动估值公式、不碰量纲（EC/CMTV 那类极端值留待第二步 rank 标准化处理，一刀切会误杀 BRK-B 等金融股）。
+    n0 = len(buy_data)
+    # 1) 日期对齐：只留「最新交易日」的票。
+    buy_data = buy_data[buy_data['date'] == latest_date].reset_index(drop=True)
+    n_stale = n0 - len(buy_data)
+    # 2) 仙股过滤：收盘价低于退市线（A股 ¥1 / 美股 $1）。
+    buy_data = buy_data[buy_data['close'] >= MIN_CLOSE].reset_index(drop=True)
+    n_penny = n0 - n_stale - len(buy_data)
+    # 3) 关键字段缺失剔除：排序依赖 up_down / buffett / dcf / schloss，任一是 NaN 都不能放行。
+    buy_data = buy_data.dropna(subset=['up_down', 'buffett', 'dcf', 'schloss']).reset_index(drop=True)
+    n_nan = n0 - n_stale - n_penny - len(buy_data)
+    if buy_data.empty:
+        raise RuntimeError(
+            f"数据闸门后 buy_predict 为空（{market}）：原 {n0} 只里没有 date == {latest_date} 的票。"
+            "通常是日线已更新、而 two/one 未随最新日线重跑导致的日期错位。"
+        )
+    print(f'[one] 数据闸门：{n0} -> {len(buy_data)} 只'
+          f'（退市/停牌 {n_stale}、仙股 {n_penny}、缺字段 {n_nan}）', flush=True)
+
     buy_data = buy_data.sort_values('buffett', ascending=False).reset_index(drop=True)
     buy_data = buy_data.sort_values('up_down', ascending=False).reset_index(drop=True)
     # 精简列（2026-10-27 用户定案）：关键信息 + 最终决定值 + two 的砍半值 + 各模型决定值。
